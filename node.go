@@ -1,56 +1,67 @@
 package ckit
 
 import (
+	"context"
 	"sort"
 	"sync"
 
 	"github.com/rfratto/ckit/chash"
+	"github.com/rfratto/ckit/internal/queue"
 )
 
 // Node keeps track of peers that are part of the cluster and allows
 // applications to look up owners of a key.
-type Node interface {
-	// Get looks up the n owners of key. Fails if there are not at least n nodes.
-	Get(key string, n int) ([]Peer, error)
+type Node struct {
+	h chash.Hash
 
-	// Close will stop any Node implementation-specific logic that determines
-	// cluster membership.
-	Close() error
-
-	// AddPeer adds a peer to the Node. The local node should always be added
-	// as a Peer.
-	//
-	// AddPeer may also be called when p is updated.
-	AddPeer(p Peer)
-
-	// RemovePeer removes a peer from the Node.
-	RemovePeer(name string)
-}
-
-// BasicNode implements Node. Basic nodes will use all discovered peers for
-// hashing.
-type BasicNode struct {
-	h              chash.Hash
+	peerQueue      *queue.Queue
 	onPeersChanged OnPeersChanged
+	stopPeerQueue  context.CancelFunc
 
 	peersMut sync.RWMutex
 	peers    map[string]Peer
 }
 
-// NewBasicNode returns a new BasicNode. hb will be used for the hashing
-// algorithm and cb will be invoked whenever the set of active peers changes.
-func NewBasicNode(hb chash.Builder, cb OnPeersChanged) *BasicNode {
-	bn := &BasicNode{
-		h:              hb(),
+// NewNode returns a new Node. hb will be used for the hashing algorithm.
+//
+// cb will be invoked with the latest set of peers when the peers change
+// and cb is not currently running. This means if peers change multiple
+// times while cb is executing, cb will only be invoked again with the
+// final set of peers.
+func NewNode(hb chash.Builder, cb OnPeersChanged) *Node {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	bn := &Node{
+		h: hb(),
+
+		peerQueue:      queue.New(1),
 		onPeersChanged: cb,
+		stopPeerQueue:  cancel,
 
 		peers: make(map[string]Peer),
 	}
+	go bn.run(ctx)
 	return bn
 }
 
+func (bn *Node) run(ctx context.Context) {
+	if bn.onPeersChanged == nil {
+		return
+	}
+
+	for {
+		v, err := bn.peerQueue.Dequeue(ctx)
+		if err != nil {
+			break
+		}
+
+		data := v.([]Peer)
+		bn.onPeersChanged(data)
+	}
+}
+
 // Get retrieves the n owners of key. Fails if there are not at least n Peers.
-func (bn *BasicNode) Get(key string, n int) ([]Peer, error) {
+func (bn *Node) Get(key string, n int) ([]Peer, error) {
 	bn.peersMut.RLock()
 	defer bn.peersMut.RUnlock()
 
@@ -65,14 +76,15 @@ func (bn *BasicNode) Get(key string, n int) ([]Peer, error) {
 	return res, nil
 }
 
-// Close closes the BasicNode. No further events will be handled.
-func (bn *BasicNode) Close() error {
+// Close closes the Node. No further events will be handled.
+func (bn *Node) Close() error {
+	bn.stopPeerQueue()
 	return nil
 }
 
 // AddPeer adds or updates a peer to bn. The peer will automatically be
 // considered for hashing.
-func (bn *BasicNode) AddPeer(p Peer) {
+func (bn *Node) AddPeer(p Peer) {
 	bn.peersMut.Lock()
 	defer bn.peersMut.Unlock()
 
@@ -82,7 +94,7 @@ func (bn *BasicNode) AddPeer(p Peer) {
 
 // syncPeers will update the hasher with the new set of peers and invoke
 // the callback. syncPeers must only be invoked when peersMut is held.
-func (bn *BasicNode) syncPeers() {
+func (bn *Node) syncPeers() {
 	peersCopy := make([]Peer, 0, len(bn.peers))
 	keys := make([]string, 0, len(bn.peers))
 	for key, peer := range bn.peers {
@@ -93,14 +105,13 @@ func (bn *BasicNode) syncPeers() {
 	bn.h.SetNodes(keys)
 
 	if bn.onPeersChanged != nil {
-		// TODO(rfratto): run in goroutine, allow this to be non-blocking.
-		bn.onPeersChanged(peersCopy)
+		bn.peerQueue.Enqueue(peersCopy)
 	}
 }
 
 // RemovePeer removes a peer from bn. The peer will automatically no longer
 // be considered for hashing.
-func (bn *BasicNode) RemovePeer(name string) {
+func (bn *Node) RemovePeer(name string) {
 	bn.peersMut.Lock()
 	defer bn.peersMut.Unlock()
 

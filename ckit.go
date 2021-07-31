@@ -1,22 +1,19 @@
-// Package ckit is an extendible cluster toolkit to create clusters for
-// building distributed systems that use consistent hashing for message
-// distribution. It has a few core concepts:
+// Package ckit is a lightweight cluster toolkit for creating distributed
+// systems that use consistent hashing for message distribution. It uses
+// three main concepts:
 //
-// 1. The Discoverer is the base of the cluster and used by every node.
-//    Discoverers find peers with a Discoverer using gossip.
+// 1. Discoverers use gossip to find other machines with a Discoverer. These
+//    are cluster Peers.
 //
-// 2. A Node sits in front of a Discoverer and responds to peer discoveries.
-//    A Node may implement extra logic to determine which subset of
-//    discovered nodes can be used for message distribution.
+// 2. Discovered Peers are sent to a Node, which keeps track of cluster state.
 //
-// 3. Finally, implementers of Node use a Hash to determine how to implement
-//    consistent hashing.
+// 3. Nodes manage the state of a Hash, which determines which Peer in a
+//    cluster owns a message.
 package ckit
 
-// Peer is a discovered peer in the cluster. It holds its node name along
-// with its address used for discovery (gossip) and an API.
+// Peer is a discovered peer within the cluster.
 type Peer struct {
-	// Name of the Peer, uniquely identifying it from other peers.
+	// Name of the Peer. Unique across the whole cluster.
 	Name string
 	// Address used for gossiping to this peer. Includes the port number.
 	GossipAddr string
