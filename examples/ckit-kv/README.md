@@ -28,7 +28,11 @@ ckit-kv serve --node-name=node-b --gossip-port=7936 --api-port=8081 --join-addrs
 Finally, you can use the third terminal window to interface with either node:
 
 ```
-ckit set --addr=127.0.0.1:8080 hello world
-ckit get --addr=127.0.0.1:8081 hello
-ckit del --addr=127.0.0.1:8081 hello
+ckit-kv set --addr=127.0.0.1:8080 hello world
+ckit-kv get --addr=127.0.0.1:8081 hello
+ckit-kv del --addr=127.0.0.1:8081 hello
 ```
+
+If you shut down either node, any keys they were storing locally will be
+transferred to the other node. Similarly, if you bring up a third node, any keys
+that now belong to that third node will be moved to it.
