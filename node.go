@@ -2,6 +2,7 @@ package ckit
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"sync"
 
@@ -17,6 +18,8 @@ type Node struct {
 	peerQueue      *queue.Queue
 	onPeersChanged OnPeersChanged
 	stopPeerQueue  context.CancelFunc
+	lastSet        PeerSet
+	runDone        chan struct{}
 
 	peersMut sync.RWMutex
 	peers    map[string]Peer
@@ -37,6 +40,7 @@ func NewNode(hb chash.Builder, cb OnPeersChanged) *Node {
 		peerQueue:      queue.New(1),
 		onPeersChanged: cb,
 		stopPeerQueue:  cancel,
+		runDone:        make(chan struct{}),
 
 		peers: make(map[string]Peer),
 	}
@@ -45,6 +49,8 @@ func NewNode(hb chash.Builder, cb OnPeersChanged) *Node {
 }
 
 func (bn *Node) run(ctx context.Context) {
+	defer close(bn.runDone)
+
 	if bn.onPeersChanged == nil {
 		return
 	}
@@ -55,8 +61,8 @@ func (bn *Node) run(ctx context.Context) {
 			break
 		}
 
-		data := v.([]Peer)
-		bn.onPeersChanged(data)
+		bn.lastSet = v.([]Peer)
+		bn.onPeersChanged(bn.lastSet)
 	}
 }
 
@@ -77,9 +83,41 @@ func (bn *Node) Get(key string, n int) ([]Peer, error) {
 }
 
 // Close closes the Node. No further events will be handled.
+//
+// If a OnPeersChanged callback was given to NewNode, Close will synchronously
+// call the callback before exiting with the set of peers excluding the local
+// node.
 func (bn *Node) Close() error {
 	bn.stopPeerQueue()
+	<-bn.runDone
+	bn.flush()
 	return nil
+}
+
+func (bn *Node) flush() {
+	if bn.onPeersChanged == nil {
+		return
+	}
+
+	bn.peersMut.RLock()
+	defer bn.peersMut.RUnlock()
+
+	rem := make(PeerSet, 0, len(bn.peers))
+	for _, p := range bn.peers {
+		if p.Self {
+			continue
+		}
+		rem = append(rem, p)
+	}
+
+	// Optimization for clients: don't call the callback again if we've already
+	// just invoked it with the same set.
+	sort.Slice(bn.lastSet, func(i, j int) bool { return bn.lastSet[i].Name < bn.lastSet[j].Name })
+	sort.Slice(rem, func(i, j int) bool { return rem[i].Name < rem[j].Name })
+
+	if !reflect.DeepEqual(rem, bn.lastSet) {
+		bn.onPeersChanged(rem)
+	}
 }
 
 // AddPeer adds or updates a peer to bn. The peer will automatically be

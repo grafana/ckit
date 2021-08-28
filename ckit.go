@@ -11,6 +11,8 @@
 //    cluster owns a message.
 package ckit
 
+import "strings"
+
 // Peer is a discovered peer within the cluster.
 type Peer struct {
 	// Name of the Peer. Unique across the whole cluster.
@@ -19,9 +21,28 @@ type Peer struct {
 	GossipAddr string
 	// An application-specific addr. Typically used for sharing API addresses.
 	ApplicationAddr string
+	// Self is true when this Peer represents the local discoverer.
+	Self bool
+}
+
+// String returns the name of p.
+func (p Peer) String() string {
+	return p.Name
+}
+
+// PeerSet is a set of Peers.
+type PeerSet []Peer
+
+// String returns the set of peers.
+func (ps PeerSet) String() string {
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		names[i] = p.String()
+	}
+	return strings.Join(names, ",")
 }
 
 // OnPeersChanged is a function that will be invoked whenever the set of peers
 // changes. It is only guaranteed that the latest set of changes will be passed
 // to the callback; intermediate changes may be skipped.
-type OnPeersChanged = func(ps []Peer)
+type OnPeersChanged = func(ps PeerSet)

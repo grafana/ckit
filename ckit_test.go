@@ -17,7 +17,7 @@ func Example() {
 	//
 	// We also provide a callback function to allow our application to implement
 	// custom logic for when the set of active peers changes.
-	node := ckit.NewNode(chash.Rendezvous, func(peers []ckit.Peer) {
+	node := ckit.NewNode(chash.Rendezvous, func(peers ckit.PeerSet) {
 		names := make([]string, len(peers))
 		for i, p := range peers {
 			names[i] = p.Name

@@ -164,7 +164,7 @@ func (dd *discovererDelegate) NotifyJoin(node *memberlist.Node) {
 }
 
 func (dd *discovererDelegate) NotifyUpdate(node *memberlist.Node) {
-	peer, err := convertNode(node)
+	peer, err := convertNode(node, dd.cfg.Name)
 	if err != nil || peer == nil {
 		level.Warn(dd.log).Log("msg", "failed to convert node to cluster peer", "err", err)
 		return
@@ -172,7 +172,7 @@ func (dd *discovererDelegate) NotifyUpdate(node *memberlist.Node) {
 	dd.node.AddPeer(*peer)
 }
 
-func convertNode(n *memberlist.Node) (*Peer, error) {
+func convertNode(n *memberlist.Node, local string) (*Peer, error) {
 	if n.Meta == nil {
 		return nil, fmt.Errorf("ignoring peer with no metadata set")
 	}
@@ -194,6 +194,7 @@ func convertNode(n *memberlist.Node) (*Peer, error) {
 		Name:            n.Name,
 		GossipAddr:      n.Address(),
 		ApplicationAddr: md.ApplicationAddr,
+		Self:            n.Name == local,
 	}, nil
 }
 
