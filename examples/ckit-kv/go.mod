@@ -1,4 +1,4 @@
-module github.com/rfratto/ckit/examples/kv
+module github.com/rfratto/ckit/examples/ckit-kv
 
 go 1.16
 
