@@ -3,12 +3,12 @@
 // three main concepts:
 //
 // 1. Discoverers use gossip to find other machines with a Discoverer. These
-//    are cluster Peers.
+// are cluster Peers.
 //
 // 2. Discovered Peers are sent to a Node, which keeps track of cluster state.
 //
 // 3. Nodes manage the state of a Hash, which determines which Peer in a
-//    cluster owns a message.
+// cluster owns a message.
 package ckit
 
 import "strings"
