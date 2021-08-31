@@ -2,8 +2,8 @@ package ckit_test
 
 import (
 	"fmt"
+	"log"
 	"strings"
-	"time"
 
 	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/chash"
@@ -16,13 +16,15 @@ func Example() {
 	// very good distribution.
 	//
 	// We also provide a callback function to allow our application to implement
-	// custom logic for when the set of active peers changes.
+	// custom logic for when the set of active peers changes. Note that our
+	// callback function gets called in the background and may not always
+	// be executed when running this example.
 	node := ckit.NewNode(chash.Rendezvous, func(peers ckit.PeerSet) {
 		names := make([]string, len(peers))
 		for i, p := range peers {
 			names[i] = p.Name
 		}
-		fmt.Printf("Peers changed: %s\n", strings.Join(names, ","))
+		log.Printf("Peers changed: %s", strings.Join(names, ","))
 	})
 	defer node.Close()
 
@@ -54,15 +56,7 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-
-	// The NewNode callback gets invoked asynchronously, so we need to wait a
-	// little for the event to be called. We'll do the same on shutdown.
-	time.Sleep(100 * time.Millisecond)
-
-	defer func() {
-		disc.Close()
-		time.Sleep(100 * time.Millisecond)
-	}()
+	defer disc.Close()
 
 	// Get the list of owners for some-key. We're the only node, so it should
 	// return ourselves.
@@ -74,7 +68,5 @@ func Example() {
 	fmt.Printf("Owners of some-key: %s\n", owners[0].Name)
 
 	// Output:
-	// Peers changed: first-node
 	// Owners of some-key: first-node
-	// Peers changed:
 }
