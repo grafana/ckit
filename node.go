@@ -143,6 +143,7 @@ func (bn *Node) syncPeers() {
 	bn.h.SetNodes(keys)
 
 	if bn.onPeersChanged != nil {
+		sort.Slice(peersCopy, func(i, j int) bool { return peersCopy[i].Name < peersCopy[j].Name })
 		bn.peerQueue.Enqueue(peersCopy)
 	}
 }
