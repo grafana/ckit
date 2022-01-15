@@ -81,4 +81,4 @@ func Example() {
 
 	// Output:
 	// Owners of some-key: first-node
-}
+}

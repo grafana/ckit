@@ -25,14 +25,12 @@ type packetsClientConn struct {
 
 	localAddr, remoteAddr net.Addr
 
-	readMut           *sync.Mutex        // Protects reads
 	readCnd           *sync.Cond         // Signals waiting readers
 	spawnReader       sync.Once          // Used to lazily launch a cli reader
 	readMessages      chan readResult    // Messages read from the cli reader
 	readTimeout       time.Time          // Read deadline
 	readTimeoutCancel context.CancelFunc // Cancel read deadline and wake up goroutines
 	readBuffer        bytes.Buffer       // Data buffer ready for immediate reading
-	lastReadError     error              // Final error from cli reader
 
 	writeMut sync.Mutex
 }
@@ -73,8 +71,8 @@ func (c *packetsClientConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *packetsClientConn) readOrBlock(b []byte) (n int, err error) {
-	c.readMut.Lock()
-	defer c.readMut.Unlock()
+	c.readCnd.L.Lock()
+	defer c.readCnd.L.Unlock()
 	if !c.readTimeout.IsZero() && !time.Now().Before(c.readTimeout) {
 		return 0, os.ErrDeadlineExceeded
 	}
@@ -92,22 +90,13 @@ func (c *packetsClientConn) readOrBlock(b []byte) (n int, err error) {
 	select {
 	case msg, ok := <-c.readMessages:
 		if !ok {
-			// Reader is closed, we can return immediately.
-			if c.lastReadError == nil {
-				c.lastReadError = io.EOF
-			}
-			return n, c.lastReadError
+			return n, io.EOF
 		}
-
 		_, err = c.readBuffer.Write(msg.Message.Data)
 		if err != nil {
 			return n, err
 		}
-
-		if msg.Error != nil && c.lastReadError == nil {
-			c.lastReadError = msg.Error
-		}
-		return n, c.lastReadError
+		return n, msg.Error
 	default:
 		c.readCnd.Wait() // Wait for something to be written or for the timeout to fire
 		return 0, nil
@@ -155,8 +144,8 @@ func (c *packetsClientConn) SetDeadline(t time.Time) error {
 }
 
 func (c *packetsClientConn) SetReadDeadline(t time.Time) error {
-	c.readMut.Lock()
-	defer c.readMut.Unlock()
+	c.readCnd.L.Lock()
+	defer c.readCnd.L.Unlock()
 
 	c.readTimeout = t
 

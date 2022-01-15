@@ -105,6 +105,11 @@ func (q *Queue) Enqueue(v interface{}) {
 	q.sema.L.Lock()
 	defer q.sema.L.Unlock()
 
+	if q.closed {
+		// The queue is closed: quit immediately
+		return
+	}
+
 	// Perform a sorted insert into the slice.
 	insert := sort.Search(len(q.elements), func(i int) bool {
 		return q.elements[i].Time > element.Time

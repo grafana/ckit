@@ -25,6 +25,8 @@ import (
 
 //go:generate protoc --go_out=. --go_opt=module=github.com/rfratto/ckit/internal/memberlistgrpc --go-grpc_out=. --go-grpc_opt=module=github.com/rfratto/ckit/internal/memberlistgrpc  ./memberlistgrpc.proto
 
+const packetBufferSize = 1000
+
 // Options controls the memberlistgrpc transport.
 type Options struct {
 	// Optional logger to use.
@@ -37,6 +39,8 @@ type Options struct {
 	PacketTimeout time.Duration
 }
 
+// NewTransport returns a new memberlist.Transport. Transport must be closed to
+// prevent leaking resources.
 func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) {
 	if opts.Pool == nil {
 		return nil, fmt.Errorf("client Pool must be provided")
@@ -47,16 +51,22 @@ func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) 
 		l = log.NewNopLogger()
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	tx := &transport{
 		log:  l,
 		opts: opts,
 
-		inPacketQueue:  queue.New(1000), // Allow a buffer of 1000 packets
-		inPacketCh:     make(chan *memberlist.Packet),
-		outPacketQueue: queue.New(1000), // Allow a buffer of 1000 packets
+		inPacketQueue:  queue.New(packetBufferSize),
+		outPacketQueue: queue.New(packetBufferSize),
 
-		streamCh: make(chan net.Conn),
+		inPacketCh: make(chan *memberlist.Packet),
+		streamCh:   make(chan net.Conn),
+
+		exited: make(chan struct{}),
+		cancel: cancel,
 	}
+	go tx.run(ctx)
 
 	RegisterTransportServer(srv, &transportServer{t: tx})
 	return tx, nil
@@ -66,21 +76,20 @@ type transport struct {
 	log  log.Logger
 	opts Options
 
-	startInPacketQueue sync.Once
-	inPacketQueue      *queue.Queue
-	inPacketCh         chan *memberlist.Packet
+	// memberlist is designed for UDP, which is nearly non-blocking for writes.
+	// We need to be able to emulate the same performance of passing messages, so
+	// we write messages to buffered queues which are processed in the
+	// background.
+	inPacketQueue, outPacketQueue *queue.Queue
 
-	// Queue for outgoing packets so we can implement WriteTo as
-	// nearly-non-blocking
-	startOutPacketQueue sync.Once
-	outPacketQueue      *queue.Queue
-
-	streamCh chan net.Conn
+	inPacketCh chan *memberlist.Packet
+	streamCh   chan net.Conn
 
 	// Incoming packets and streams should be rejected when the transport is
 	// closed.
 	closedMut sync.RWMutex
-	closed    bool
+	exited    chan struct{}
+	cancel    context.CancelFunc
 
 	// Generated after calling
 	localAddr net.Addr
@@ -90,6 +99,53 @@ var (
 	_ memberlist.Transport          = (*transport)(nil)
 	_ memberlist.NodeAwareTransport = (*transport)(nil)
 )
+
+func (t *transport) run(ctx context.Context) {
+	defer close(t.exited)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	defer wg.Wait()
+
+	// Close our queues before shutting down. This must be done before calling
+	// wg.Wait as it will cause the goroutines to exit.
+	defer func() { _ = t.inPacketQueue.Close() }()
+	defer func() { _ = t.outPacketQueue.Close() }()
+
+	// Process queue of incoming packets
+	go func() {
+		defer wg.Done()
+
+		for {
+			v, err := t.inPacketQueue.Dequeue(context.Background())
+			if err != nil {
+				return
+			}
+			t.inPacketCh <- v.(*memberlist.Packet)
+		}
+	}()
+
+	// Process queue of outgoing packets
+	go func() {
+		defer wg.Done()
+
+		for {
+			v, err := t.outPacketQueue.Dequeue(context.Background())
+			if err != nil {
+				return
+			}
+			op := v.(*outPacket)
+			t.writeToSync(op.Data, op.Addr)
+		}
+	}()
+
+	<-ctx.Done()
+}
+
+type outPacket struct {
+	Data []byte
+	Addr string
+}
 
 // FinalAdvertiseAddr returns the IP to advertise to peers. The memberlist must
 // be configured with an advertise address and port, otherwise this will fail.
@@ -115,24 +171,6 @@ func (t *transport) FinalAdvertiseAddr(ip string, port int) (net.IP, int, error)
 }
 
 func (t *transport) WriteTo(b []byte, addr string) (time.Time, error) {
-	type outPacket struct {
-		Data []byte
-		Addr string
-	}
-
-	t.startOutPacketQueue.Do(func() {
-		go func() {
-			for {
-				v, err := t.outPacketQueue.Dequeue(context.Background())
-				if err != nil {
-					return
-				}
-				op := v.(*outPacket)
-				t.writeToSync(op.Data, op.Addr)
-			}
-		}()
-	})
-
 	t.outPacketQueue.Enqueue(&outPacket{Data: b, Addr: addr})
 	return time.Now(), nil
 }
@@ -163,18 +201,6 @@ func (t *transport) WriteToAddress(b []byte, addr memberlist.Address) (time.Time
 }
 
 func (t *transport) PacketCh() <-chan *memberlist.Packet {
-	t.startInPacketQueue.Do(func() {
-		go func() {
-			for {
-				v, err := t.inPacketQueue.Dequeue(context.Background())
-				if err != nil {
-					return
-				}
-				t.inPacketCh <- v.(*memberlist.Packet)
-			}
-		}()
-	})
-
 	return t.inPacketCh
 }
 
@@ -211,7 +237,6 @@ func (t *transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 		localAddr:  t.localAddr,
 		remoteAddr: remoteAddr,
 
-		readMut:      &readMut,
 		readCnd:      readCnd,
 		readMessages: make(chan readResult),
 	}, nil
@@ -228,9 +253,8 @@ func (t *transport) StreamCh() <-chan net.Conn {
 func (t *transport) Shutdown() error {
 	t.closedMut.Lock()
 	defer t.closedMut.Unlock()
-	t.closed = true
-	_ = t.inPacketQueue.Close()
-	_ = t.outPacketQueue.Close()
+	t.cancel()
+	<-t.exited
 	return nil
 }
 
@@ -274,7 +298,6 @@ func (s *transportServer) StreamPackets(stream Transport_StreamPacketsServer) er
 		localAddr:  s.t.localAddr,
 		remoteAddr: p.Addr,
 
-		readMut:      &readMut,
 		readCnd:      readCnd,
 		readMessages: make(chan readResult),
 	}
