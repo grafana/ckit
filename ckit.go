@@ -17,10 +17,8 @@ import "strings"
 type Peer struct {
 	// Name of the Peer. Unique across the whole cluster.
 	Name string
-	// Address used for gossiping to this peer. Includes the port number.
-	GossipAddr string
-	// An application-specific addr. Typically used for sharing API addresses.
-	ApplicationAddr string
+	// Address of the peer. Includes the port number.
+	Addr string
 	// Self is true when this Peer represents the local discoverer.
 	Self bool
 }

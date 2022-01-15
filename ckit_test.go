@@ -1,15 +1,25 @@
 package ckit_test
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 
 	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/chash"
+	"google.golang.org/grpc"
 )
 
 func Example() {
+	// Our cluster works over gRPC, so we must first create a gRPC server.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	grpcServer := grpc.NewServer()
+
 	// Create a node to use for consistent hashing and distributing messages.
 	// Nodes must be given a consistent hashing algorithm to use. Here we
 	// use Rendezvous hashing, which can lookup an owner in O(N) time and has
@@ -35,20 +45,22 @@ func Example() {
 		// Name of the discoverer. Must be unique.
 		Name: "first-node",
 
-		// Address and port to listen on for gossip. AdvertiseAddr will be the
-		// address shared with other nodes.
-		ListenAddr:    "127.0.0.1",
-		ListenPort:    7950,
-		AdvertiseAddr: "127.0.0.1",
-
-		// The address of the API exposing application business logic. Can be
-		// any string.
-		ApplicationAddr: "127.0.0.1:8080",
+		// AdvertiseAddr will be the address shared with other nodes.
+		AdvertiseAddr: lis.Addr().String(),
 	}
-	disc, err := ckit.NewDiscoverer(cfg, node)
+	disc, err := ckit.NewDiscoverer(grpcServer, cfg, node)
 	if err != nil {
 		panic(err)
 	}
+
+	// Run our gRPC server. This can only happen after the discoverer is created.
+	go func() {
+		err := grpcServer.Serve(lis)
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			panic(err)
+		}
+	}()
+	defer grpcServer.GracefulStop()
 
 	// Discover peers in the cluster. We're the only node, so pass an empty string
 	// slice. Otherwise, we'd give the address of another peer to connect to.

@@ -3,14 +3,16 @@ package ckit
 import (
 	"fmt"
 	"io"
+	"net"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/hashicorp/memberlist"
-	"github.com/rfratto/ckit/internal/lamport"
-	"github.com/rfratto/ckit/internal/messages"
+	"github.com/rfratto/ckit/clientpool"
+	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/queue"
+	"google.golang.org/grpc"
 )
 
 // DiscovererConfig controls how peers discover each other.
@@ -19,23 +21,17 @@ type DiscovererConfig struct {
 	// This will be the name found in Peer.
 	Name string
 
-	// Address to listen for gossip traffic on.
-	ListenAddr string
-	// Address to tell peers to connect to.
+	// Address in host:port form to tell peers to connect to.
 	AdvertiseAddr string
 
-	// Port (UDP & TCP) to listen for gossip traffic on.
-	ListenPort int
-
-	// ApplicationAddr is an application-specific address to share with peers.
-	// Useful for sharing the address where an API is exposed.
-	ApplicationAddr string
-
-	// Log to use for logging events.
+	// Optional logger to use for logging events.
 	Log log.Logger
+
+	// Client pool to use for forming gRPC connections to peers.
+	Pool *clientpool.Pool
 }
 
-// A Discoverer is used to find peers in the cluster. They work using gossip;
+// A Discoverer is used for nodes to discover each other. Nodes gossip over gRPC;
 // once Start is called with an initial set of peers, all peers will eventually
 // be found.
 //
@@ -48,17 +44,41 @@ type Discoverer struct {
 // The Node's AddPeer and RemovePeer methods will be invoked as peers are
 // added, updated, and removed. The Node's Close method will be invoked
 // when the Discoverer is closed.
-func NewDiscoverer(cfg *DiscovererConfig, n *Node) (*Discoverer, error) {
+func NewDiscoverer(srv *grpc.Server, cfg *DiscovererConfig, n *Node) (*Discoverer, error) {
 	if cfg.Log == nil {
 		cfg.Log = log.NewNopLogger()
+	}
+	if cfg.Pool == nil {
+		var err error
+		cfg.Pool, err = clientpool.New(clientpool.DefaultOptions, grpc.WithInsecure())
+		if err != nil {
+			return nil, fmt.Errorf("failed to build default client pool: %w", err)
+		}
+	}
+
+	advertiseAddr, advertisePortString, err := net.SplitHostPort(cfg.AdvertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read advertise address: %w", err)
+	}
+	advertisePort, err := net.LookupPort("tcp", advertisePortString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse advertise port: %w", err)
+	}
+
+	grpcTransport, err := memberlistgrpc.NewTransport(srv, memberlistgrpc.Options{
+		Log:           cfg.Log,
+		Pool:          cfg.Pool,
+		PacketTimeout: 3 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transport: %w", err)
 	}
 
 	mlc := memberlist.DefaultLANConfig()
 	mlc.Name = cfg.Name
-	mlc.BindAddr = cfg.ListenAddr
-	mlc.AdvertiseAddr = cfg.AdvertiseAddr
-	mlc.BindPort = cfg.ListenPort
-	mlc.AdvertisePort = cfg.ListenPort
+	mlc.Transport = grpcTransport
+	mlc.AdvertiseAddr = advertiseAddr
+	mlc.AdvertisePort = advertisePort
 	mlc.LogOutput = io.Discard
 
 	dd := &discovererDelegate{
@@ -79,8 +99,8 @@ func NewDiscoverer(cfg *DiscovererConfig, n *Node) (*Discoverer, error) {
 	}
 
 	dd.ml = ml
-	dd.TransmitLimitedQueue.NumNodes = ml.NumMembers
-	dd.TransmitLimitedQueue.RetransmitMult = mlc.RetransmitMult
+	dd.NumNodes = ml.NumMembers
+	dd.RetransmitMult = mlc.RetransmitMult
 
 	return &Discoverer{d: dd}, nil
 }
@@ -124,18 +144,8 @@ type discovererDelegate struct {
 }
 
 func (dd *discovererDelegate) NodeMeta(limit int) []byte {
-	raw, err := messages.Encode(&messages.Metadata{
-		Time:            lamport.Tick(),
-		ApplicationAddr: dd.cfg.ApplicationAddr,
-	})
-	if err != nil {
-		level.Error(dd.log).Log("msg", "failed to encode metadata", "err", err)
-		return nil
-	} else if len(raw) > limit {
-		level.Error(dd.log).Log("msg", "not enough space to encode metadata", "size", len(raw), "limit", limit)
-		return nil
-	}
-	return raw
+	// no-op: no expected metadata
+	return nil
 }
 
 func (dd *discovererDelegate) NotifyMsg(raw []byte) {
@@ -164,38 +174,11 @@ func (dd *discovererDelegate) NotifyJoin(node *memberlist.Node) {
 }
 
 func (dd *discovererDelegate) NotifyUpdate(node *memberlist.Node) {
-	peer, err := convertNode(node, dd.cfg.Name)
-	if err != nil || peer == nil {
-		level.Warn(dd.log).Log("msg", "failed to convert node to cluster peer", "err", err)
-		return
-	}
-	dd.node.AddPeer(*peer)
-}
-
-func convertNode(n *memberlist.Node, local string) (*Peer, error) {
-	if n.Meta == nil {
-		return nil, fmt.Errorf("ignoring peer with no metadata set")
-	}
-
-	buf, ty, err := messages.Validate(n.Meta)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read metadata: %w", err)
-	} else if ty != messages.TypeMetadata {
-		return nil, fmt.Errorf("unexpected metadata type %q", ty)
-	}
-
-	var md messages.Metadata
-	if err := messages.Decode(buf, &md); err != nil {
-		return nil, fmt.Errorf("could not read metadata: %w", err)
-	}
-	lamport.Observe(md.Time)
-
-	return &Peer{
-		Name:            n.Name,
-		GossipAddr:      n.Address(),
-		ApplicationAddr: md.ApplicationAddr,
-		Self:            n.Name == local,
-	}, nil
+	dd.node.AddPeer(Peer{
+		Name: node.Name,
+		Addr: node.Address(),
+		Self: node.Name == dd.cfg.Name,
+	})
 }
 
 func (dd *discovererDelegate) NotifyLeave(node *memberlist.Node) {
