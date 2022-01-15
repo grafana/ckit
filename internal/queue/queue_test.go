@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,19 @@ func TestDequeue(t *testing.T) {
 	v, err := q.Dequeue(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "hello", v)
+}
+
+func TestQueue_Close(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	q := New(Unbounded)
+	q.Enqueue("hello")
+	require.NoError(t, q.Close())
+
+	v, err := q.Dequeue(ctx)
+	require.ErrorIs(t, err, io.EOF)
+	require.Nil(t, v)
 }
 
 func TestEnqueue_Race(t *testing.T) {

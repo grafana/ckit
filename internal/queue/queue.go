@@ -3,6 +3,7 @@ package queue
 
 import (
 	"context"
+	"io"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ const Unbounded int = -1
 type Queue struct {
 	sema     *sync.Cond
 	elements []entry
+	closed   bool
 
 	dequeueInUse uint32
 
@@ -44,27 +46,31 @@ func (q *Queue) Dequeue(ctx context.Context) (interface{}, error) {
 	}
 	defer atomic.StoreUint32(&q.dequeueInUse, 0)
 
-	ctx, cancel := context.WithCancel(ctx)
+	parentCtx := ctx
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	// Ensure that if context is canceled we wake ourselves up so we can
 	// exit.
 	go func() {
 		<-ctx.Done()
-		q.sema.Signal()
+		if parentCtx.Err() != nil {
+			// We only need to signal if the parent context canceled; otherwise its
+			// our local context and we're already exiting normally.
+			q.sema.Signal()
+		}
 	}()
 
 	q.sema.L.Lock()
-	for {
-		if ctx.Err() != nil || len(q.elements) > 0 {
-			break
-		}
+	for ctx.Err() == nil && !q.closed && len(q.elements) == 0 {
 		q.sema.Wait()
 	}
 	defer q.sema.L.Unlock()
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	} else if q.closed {
+		return nil, io.EOF
 	}
 
 	element := q.elements[0]
@@ -115,4 +121,15 @@ func (q *Queue) Enqueue(v interface{}) {
 	}
 
 	q.sema.Signal()
+}
+
+// Close the queue, preventing any more messages from being sent. Dequeue will
+// return io.EOF.
+func (q *Queue) Close() error {
+	q.sema.L.Lock()
+	defer q.sema.L.Unlock()
+	q.closed = true
+	q.elements = nil
+	q.sema.Signal()
+	return nil
 }
