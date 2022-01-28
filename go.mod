@@ -5,7 +5,6 @@ go 1.16
 require (
 	github.com/cespare/xxhash v1.1.0
 	github.com/go-kit/log v0.1.0
-	github.com/hashicorp/go-msgpack v0.5.3
 	github.com/hashicorp/go-multierror v1.1.0
 	github.com/hashicorp/go-uuid v1.0.1 // indirect
 	github.com/hashicorp/memberlist v0.3.1
