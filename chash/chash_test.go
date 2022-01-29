@@ -12,12 +12,12 @@ import (
 
 var allHashes = []struct {
 	Name string
-	F    func() Hash
+	H    func() Hash
 }{
-	{Name: "ring 256 tokens", F: Ring(256)},
-	{Name: "ring 512 tokens", F: Ring(512)},
-	{Name: "rendezvous", F: Rendezvous},
-	{Name: "multiprobe", F: Multiprobe},
+	{Name: "ring 256 tokens", H: func() Hash { return Ring(256) }},
+	{Name: "ring 512 tokens", H: func() Hash { return Ring(512) }},
+	{Name: "rendezvous", H: func() Hash { return Rendezvous() }},
+	{Name: "multiprobe", H: func() Hash { return Multiprobe() }},
 }
 
 // TestHashes_Consistent enforces that all consistent hashing algorithms
@@ -25,12 +25,12 @@ var allHashes = []struct {
 func TestHashes_Consistent(t *testing.T) {
 	for _, tc := range allHashes {
 		t.Run(tc.Name, func(t *testing.T) {
-			h := tc.F()
+			h := tc.H()
 
 			// Setting up 3 nodes should return those three unique nodes, in some order.
 			var (
 				nodes = []string{"node-a", "node-b", "node-c"}
-				key   = "some-key"
+				key   = Key("some-key")
 			)
 
 			h.SetNodes(nodes)
@@ -42,6 +42,7 @@ func TestHashes_Consistent(t *testing.T) {
 			// top owner.
 			h.SetNodes(allOwners[1:])
 			newOwners, err := h.Get(key, len(allOwners)-1)
+
 			require.NoError(t, err)
 			require.Len(t, newOwners, len(allOwners)-1, "did not get all input nodes as output")
 			require.Equal(t, allOwners[1], newOwners[0], "hash not using consistent hashing")
@@ -73,7 +74,7 @@ func TestHashes_Distribution(t *testing.T) {
 	for _, hasher := range allHashes {
 		t.Run(hasher.Name, func(t *testing.T) {
 			var (
-				h = hasher.F()
+				h = hasher.H()
 
 				nodes    = make([]string, numNodes)
 				nodeDist = map[string]int{}
@@ -95,7 +96,7 @@ func TestHashes_Distribution(t *testing.T) {
 
 			// Hash numHashes random keys.
 			for i := 0; i < numHashes; i++ {
-				owners, err := h.Get(randStr(), 1)
+				owners, err := h.Get(Key(randStr()), 1)
 				require.NoError(t, err)
 				for _, owner := range owners {
 					nodeDist[owner]++
@@ -160,7 +161,7 @@ func runBenchmarkHashes(b *testing.B, numNodes int) {
 	for _, hasher := range allHashes {
 		b.Run(hasher.Name, func(b *testing.B) {
 			b.StopTimer()
-			h := hasher.F()
+			h := hasher.H()
 			h.SetNodes(nodes)
 			r := rand.New(rand.NewSource(0))
 			b.StartTimer()
@@ -168,7 +169,7 @@ func runBenchmarkHashes(b *testing.B, numNodes int) {
 			for n := 0; n < b.N; n++ {
 				key := make([]byte, 5)
 				_, _ = r.Read(key)
-				_, _ = h.Get(fmt.Sprintf("%2x", key), 3)
+				_, _ = h.Get(Key(fmt.Sprintf("%2x", key)), 3)
 			}
 		})
 	}

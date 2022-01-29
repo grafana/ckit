@@ -3,7 +3,7 @@ module github.com/rfratto/ckit
 go 1.16
 
 require (
-	github.com/cespare/xxhash v1.1.0
+	github.com/cespare/xxhash/v2 v2.1.1
 	github.com/go-kit/log v0.1.0
 	github.com/hashicorp/go-multierror v1.1.0
 	github.com/hashicorp/go-uuid v1.0.1 // indirect

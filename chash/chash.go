@@ -6,11 +6,8 @@ package chash
 type Hash interface {
 	// Get will retrieve the n owners for key. Get will return an error if there
 	// are not at least n nodes.
-	Get(key string, n int) ([]string, error)
+	Get(key uint64, n int) ([]string, error)
 
 	// SetNodes updates the set of nodes used for hashing.
 	SetNodes(nodes []string)
 }
-
-// Builder returns an implementation of Hash.
-type Builder = func() Hash

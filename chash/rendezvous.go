@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-
-	"github.com/cespare/xxhash"
 )
 
 // Rendezvous returns a rendezvous hashing algorithm (HRW, Highest Random
@@ -21,7 +19,7 @@ type rendezvous struct {
 	nodes  []string
 }
 
-func (r *rendezvous) Get(key string, n int) ([]string, error) {
+func (r *rendezvous) Get(key uint64, n int) ([]string, error) {
 	r.mut.RLock()
 	defer r.mut.RUnlock()
 
@@ -32,9 +30,8 @@ func (r *rendezvous) Get(key string, n int) ([]string, error) {
 	}
 
 	var (
-		keyHash = xxhash.Sum64String(key)
-		res     = make([]string, n)
-		hashes  = make([]ringToken, len(r.nodes))
+		res    = make([]string, n)
+		hashes = make([]ringToken, len(r.nodes))
 	)
 
 	// Get the hash for all nodes, sort them, and then got the lowest three. This
@@ -42,7 +39,7 @@ func (r *rendezvous) Get(key string, n int) ([]string, error) {
 	for i, node := range r.nodes {
 		hashes[i] = ringToken{
 			node:  node,
-			token: xorshiftMult64(keyHash ^ r.hashes[node]),
+			token: xorshiftMult64(key ^ r.hashes[node]),
 		}
 	}
 	sort.Sort(byRingToken(hashes))
@@ -59,7 +56,7 @@ func (r *rendezvous) SetNodes(nodes []string) {
 		newNodes  = make([]string, len(nodes))
 	)
 	for i, n := range nodes {
-		newHashes[n] = xxhash.Sum64String(n)
+		newHashes[n] = Key(n)
 		newNodes[i] = n
 	}
 	sort.Strings(newNodes)

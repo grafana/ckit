@@ -29,7 +29,7 @@ func Example() {
 	// custom logic for when the set of active peers changes. Note that our
 	// callback function gets called in the background and may not always
 	// be executed when running this example.
-	node := ckit.NewNode(chash.Rendezvous, func(peers ckit.PeerSet) {
+	node := ckit.NewNode(chash.Rendezvous(), func(peers ckit.PeerSet) {
 		names := make([]string, len(peers))
 		for i, p := range peers {
 			names[i] = p.Name
@@ -72,7 +72,7 @@ func Example() {
 
 	// Get the list of owners for some-key. We're the only node, so it should
 	// return ourselves.
-	owners, err := node.Get("some-key", 1)
+	owners, err := node.Get(chash.Key("some-key"), 1)
 	if err != nil {
 		panic(err)
 	}
@@ -81,4 +81,4 @@ func Example() {
 
 	// Output:
 	// Owners of some-key: first-node
-}
+}

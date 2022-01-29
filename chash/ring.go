@@ -3,10 +3,8 @@ package chash
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"sync"
-
-	"github.com/cespare/xxhash"
+	"unsafe"
 )
 
 // Ring implements a ring consistent hash. numTokens determines how many tokens
@@ -18,10 +16,8 @@ import (
 // Ring hash is extremely fast, running in O(log N) time, but increases in
 // memory usage as numTokens increases. Low values of numTokens will cause poor
 // distribution; 256 or 512 is a good starting point.
-func Ring(numTokens int) func() Hash {
-	return func() Hash {
-		return &ringHash{numTokens: numTokens}
-	}
+func Ring(numTokens int) Hash {
+	return &ringHash{numTokens: numTokens}
 }
 
 type ringHash struct {
@@ -38,7 +34,7 @@ type ringToken struct {
 	token uint64
 }
 
-func (r *ringHash) Get(key string, n int) ([]string, error) {
+func (r *ringHash) Get(key uint64, n int) ([]string, error) {
 	r.mut.RLock()
 	defer r.mut.RUnlock()
 
@@ -48,9 +44,8 @@ func (r *ringHash) Get(key string, n int) ([]string, error) {
 		return []string{}, nil
 	}
 
-	keyHash := xxhash.Sum64String(key)
 	idx := sort.Search(len(r.tokens), func(i int) bool {
-		return r.tokens[i].token >= keyHash
+		return r.tokens[i].token >= key
 	})
 	if idx == len(r.tokens) {
 		// Wrap around if we hit the end of the list.
@@ -83,10 +78,21 @@ func (r *ringHash) Get(key string, n int) ([]string, error) {
 func (r *ringHash) SetNodes(nodes []string) {
 	toks := make([]ringToken, 0, len(nodes)*r.numTokens)
 	for _, node := range nodes {
+		kb := NewKeyBuilder()
+		_, _ = kb.Write(unsafeSlice(node))
+
+		// We'll continually append extra data to kb to generate all the tokens for
+		// our node. This data doesn't have to be singificant, so we'll use the
+		// token number truncated to a byte.
+		tokData := []byte{0}
+
 		for t := 0; t < r.numTokens; t++ {
+			tokData[0] = byte(t)
+			_, _ = kb.Write(tokData)
+
 			toks = append(toks, ringToken{
 				node:  node,
-				token: xxhash.Sum64String(node + strconv.Itoa(t+1)),
+				token: kb.Key(),
 			})
 		}
 	}
@@ -96,6 +102,11 @@ func (r *ringHash) SetNodes(nodes []string) {
 	defer r.mut.Unlock()
 	r.numNodes = len(nodes)
 	r.tokens = toks
+}
+
+// unsafeSlice returns s as a byte slice without making a copy.
+func unsafeSlice(s string) []byte {
+	return *((*[]byte)(unsafe.Pointer(&s)))
 }
 
 type byRingToken []ringToken

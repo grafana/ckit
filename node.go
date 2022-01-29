@@ -25,17 +25,17 @@ type Node struct {
 	peers    map[string]Peer
 }
 
-// NewNode returns a new Node. hb will be used for the hashing algorithm.
+// NewNode returns a new Node. h will be used for the hashing algorithm.
 //
 // cb will be invoked with the latest set of peers when the peers change
 // and cb is not currently running. This means if peers change multiple
 // times while cb is executing, cb will only be invoked again with the
 // final set of peers.
-func NewNode(hb chash.Builder, cb OnPeersChanged) *Node {
+func NewNode(h chash.Hash, cb OnPeersChanged) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bn := &Node{
-		h: hb(),
+		h: h,
 
 		peerQueue:      queue.New(1),
 		onPeersChanged: cb,
@@ -67,7 +67,7 @@ func (bn *Node) run(ctx context.Context) {
 }
 
 // Get retrieves the n owners of key. Fails if there are not at least n Peers.
-func (bn *Node) Get(key string, n int) ([]Peer, error) {
+func (bn *Node) Get(key uint64, n int) ([]Peer, error) {
 	bn.peersMut.RLock()
 	defer bn.peersMut.RUnlock()
 
