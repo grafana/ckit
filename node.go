@@ -258,10 +258,10 @@ func (n *Node) CurrentState() State {
 // The "to" state must be valid to move to from the current state. Acceptable
 // transitions are:
 //
-// * StatePending -> StateParticipant|StateViewer|StateTerminating|StateGone
-// * StateParticipant -> StateTerminating|StateGone
-// * StateViewer -> StateTerminating|StateGone
-// * StateTerminating -> StateGone
+//   StatePending -> StateParticipant|StateViewer|StateTerminating|StateGone
+//   StateParticipant -> StateTerminating|StateGone
+//   StateViewer -> StateTerminating|StateGone
+//   StateTerminating -> StateGone
 func (n *Node) ChangeState(ctx context.Context, to State) error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
