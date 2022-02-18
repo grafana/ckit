@@ -57,6 +57,10 @@ func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) 
 		log:  l,
 		opts: opts,
 
+		// TODO(rfratto): is it a problem that these queues have a max size?
+		// Old packets will get dropped if the max size is reached, but
+		// memberlist should be able to tolerate dropped packets in general
+		// since it's designed for UDP.
 		inPacketQueue:  queue.New(packetBufferSize),
 		outPacketQueue: queue.New(packetBufferSize),
 

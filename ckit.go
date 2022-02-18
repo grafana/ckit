@@ -1,46 +1,20 @@
-// Package ckit is a lightweight cluster toolkit for creating distributed
-// systems that use consistent hashing for message distribution. It uses
-// three main concepts:
+// Package ckit is a cluster toolkit for creating distributed systems that use
+// consistent hashing for message distribution. There are two main concepts:
 //
-// 1. Discoverers use gossip to find other machines with a Discoverer. These
-// are cluster Peers.
+// 1. Nodes use gossip to find other Nodes running in the cluster. Gossip is
+//    performed over gRPC. Nodes in the cluster are respresented as Peers.
 //
-// 2. Discovered Peers are sent to a Node, which keeps track of cluster state.
-//
-// 3. Nodes manage the state of a Hash, which determines which Peer in a
-// cluster owns a message.
+// 2. Nodes manage the state of a Hash, which are used to determine which Peer
+//    owns some key.
 package ckit
 
-import "strings"
-
-// Peer is a discovered peer within the cluster.
+// Peer is a discovered node within the cluster.
 type Peer struct {
-	// Name of the Peer. Unique across the whole cluster.
-	Name string
-	// Address of the peer. Includes the port number.
-	Addr string
-	// Self is true when this Peer represents the local discoverer.
-	Self bool
+	Name  string // Name of the Peer. Unique across the cluster.
+	Addr  string // host:port address of the peer.
+	Self  bool   // True if Peer is the local Node.
+	State State  // State of the peer.
 }
 
 // String returns the name of p.
-func (p Peer) String() string {
-	return p.Name
-}
-
-// PeerSet is a set of Peers.
-type PeerSet []Peer
-
-// String returns the set of peers.
-func (ps PeerSet) String() string {
-	names := make([]string, len(ps))
-	for i, p := range ps {
-		names[i] = p.String()
-	}
-	return strings.Join(names, ",")
-}
-
-// OnPeersChanged is a function that will be invoked whenever the set of peers
-// changes. It is only guaranteed that the latest set of changes will be passed
-// to the callback; intermediate changes may be skipped.
-type OnPeersChanged = func(ps PeerSet)
+func (p Peer) String() string { return p.Name }
