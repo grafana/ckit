@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/chash"
-	ckit "github.com/rfratto/ckit/v2"
 	"google.golang.org/grpc"
 )
 
