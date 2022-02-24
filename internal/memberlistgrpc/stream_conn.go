@@ -4,6 +4,7 @@ import (
 	"bytes"
 	context "context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -92,11 +93,15 @@ func (c *packetsClientConn) readOrBlock(b []byte) (n int, err error) {
 		if !ok {
 			return n, io.EOF
 		}
-		_, err = c.readBuffer.Write(msg.Message.Data)
-		if err != nil {
+		switch {
+		case msg.Error != nil:
+			return n, msg.Error
+		case msg.Message == nil:
+			return n, fmt.Errorf("nil message")
+		default:
+			_, err = c.readBuffer.Write(msg.Message.Data)
 			return n, err
 		}
-		return n, msg.Error
 	default:
 		c.readCnd.Wait() // Wait for something to be written or for the timeout to fire
 		return 0, nil
