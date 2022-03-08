@@ -224,6 +224,8 @@ func (n *Node) run(ctx context.Context) {
 // first transition to StateTerminating to gracefully leave the cluster.
 // Observers will no longer be notified about cluster changes after Stop
 // returns.
+//
+// Stop may not be called more than once.
 func (n *Node) Stop() error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
@@ -417,7 +419,7 @@ func (n *Node) Observe(o Observer) {
 
 func (n *Node) notifyObservers(peers []Peer) {
 	n.observersMut.Lock()
-	defer n.observersMut.Lock()
+	defer n.observersMut.Unlock()
 
 	newObservers := make([]Observer, 0, len(n.observers))
 	for _, o := range n.observers {

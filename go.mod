@@ -11,6 +11,7 @@ require (
 	github.com/hashicorp/memberlist v0.3.1
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/stretchr/testify v1.7.0
+	go.uber.org/atomic v1.9.0
 	golang.org/x/crypto v0.0.0-20210314154223-e6e6c4f2bb5b // indirect
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
