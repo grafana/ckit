@@ -170,14 +170,24 @@ func (p *Pool) removeStaleClients() {
 		if !stale && client.Conn.GetState() != connectivity.Shutdown {
 			continue
 		}
-		if err := client.Conn.Close(); err != nil {
+		if err := p.closeConn(addr, client); err != nil {
 			level.Error(p.log).Log("msg", "failed to close stale client", "err", err)
 		}
-		delete(p.clients, addr)
-		delete(p.reverseLookup, client.Conn)
-		p.m.eventsTotal.WithLabelValues("closed").Inc()
-		p.m.currentConns.Set(float64(len(p.clients)))
 	}
+}
+
+// closeConn closes a connection. clientsMut must be held.
+func (p *Pool) closeConn(addr string, client *client) error {
+	err := client.Conn.Close()
+
+	// Clean up the pool regardless of whether the connection closed
+	// successfully.
+	delete(p.clients, addr)
+	delete(p.reverseLookup, client.Conn)
+	p.m.eventsTotal.WithLabelValues("closed").Inc()
+	p.m.currentConns.Set(float64(len(p.clients)))
+
+	return err
 }
 
 // Get retrieves a new or existing *grpc.ClientConn for the given address. The
@@ -235,7 +245,7 @@ func (p *Pool) Get(ctx context.Context, addr string, extraDialOpts ...grpc.DialO
 	copy(dialOpts[0:], p.dialOpts)
 	copy(dialOpts[len(p.dialOpts):], extraDialOpts)
 
-	cc, err := grpc.DialContext(ctx, addr, dialOpts)
+	cc, err := grpc.DialContext(ctx, addr, dialOpts...)
 	if err != nil {
 		p.m.lookupsTotal.WithLabelValues("error_dial").Inc()
 		return nil, err
@@ -269,11 +279,7 @@ func (p *Pool) removeLRU() error {
 		return fmt.Errorf("no clients to remove")
 	}
 
-	err := clients[0].Conn.Close()
-	p.m.eventsTotal.WithLabelValues("closed").Inc()
-	delete(p.clients, clients[0].Addr)
-	delete(p.reverseLookup, clients[0].Conn)
-	return err
+	return p.closeConn(clients[0].Addr, clients[0])
 }
 
 // Close closes the client pool. Once the pool is closed, all existing
@@ -286,16 +292,12 @@ func (p *Pool) Close() error {
 	<-p.exited
 
 	// Close existing connections.
-	for _, client := range p.clients {
-		err := client.Conn.Close()
+	for addr, client := range p.clients {
+		err := p.closeConn(addr, client)
 		if err != nil {
 			level.Warn(p.log).Log("msg", "failed to close client on shutdown", "err", err)
 		}
-		p.m.eventsTotal.WithLabelValues("closed").Inc()
 	}
-	// Reset the map to empty instead of deleting everything individiually.
-	p.clients = make(map[string]*client)
-	p.m.currentConns.Set(0)
 
 	p.closed = true
 	return nil
