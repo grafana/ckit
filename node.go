@@ -25,9 +25,9 @@ import (
 )
 
 var (
-	// ErrNotRunning is returned by calling methods against Node when it has yet
-	// to be started or after it was stopped.
-	ErrNotRunning = errors.New("node not running")
+	// ErrStopped is returned by invoking methods against Node when it is
+	// stopped.
+	ErrStopped = errors.New("node stopped")
 )
 
 // Config configures a Node within the cluster.
@@ -90,6 +90,7 @@ type Node struct {
 	stateMut   sync.RWMutex
 	runCancel  context.CancelFunc
 	localState State
+	stopped    bool
 
 	observersMut sync.Mutex
 	observers    []Observer
@@ -175,9 +176,19 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 //
 // Start may be called multiple times to reconnect to a different set of peers.
 // Node will be set into StatePending every time Start is called.
+//
+// Start may not be called after the Node has been stopped.
 func (n *Node) Start(peers []string) error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
+
+	if n.stopped {
+		// n.ml can't be re-used after we stopped, so we need to force error the
+		// Start.
+		//
+		// TODO: maybe create a new n.ml instead?
+		return ErrStopped
+	}
 
 	// Force ourselves back into the pending state.
 	if err := n.changeState(StatePending, nil); err != nil {
@@ -224,8 +235,6 @@ func (n *Node) run(ctx context.Context) {
 // first transition to StateTerminating to gracefully leave the cluster.
 // Observers will no longer be notified about cluster changes after Stop
 // returns.
-//
-// Stop may not be called more than once.
 func (n *Node) Stop() error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
@@ -234,6 +243,13 @@ func (n *Node) Stop() error {
 		n.runCancel()
 		n.runCancel = nil
 	}
+
+	if n.stopped {
+		// n.ml.Leave will panic if being called twice. We'll be defensive and
+		// prevent anything from happening here.
+		return nil
+	}
+	n.stopped = true
 
 	// TODO(rfratto): configurable leave timeout
 	leaveTimeout := time.Second * 5
