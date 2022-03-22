@@ -1,5 +1,8 @@
 // Package clientpool implements a gRPC client pool which can manage a changing
 // number of clients to connect to.
+//
+// Applications should use one clientpool across the entire application to
+// maximize effectiveness of sharing connections.
 package clientpool
 
 import (
@@ -11,6 +14,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
@@ -51,6 +55,7 @@ type Pool struct {
 	log      log.Logger
 	dialOpts []grpc.DialOption
 	opts     Options
+	m        *metrics
 
 	clientsMut    sync.RWMutex
 	clients       map[string]*client
@@ -76,10 +81,11 @@ func (c *client) updateLastUsed() {
 }
 
 // New creats a new Pool. An error will be returned if the options are invalid.
-// The optionally provided dial options will be used to connect to clients.
+// The set of defaultDialOpts will be used when opening new connections.
+//
 //
 // Call Close to close the pool.
-func New(opts Options, dialOptions ...grpc.DialOption) (*Pool, error) {
+func New(opts Options, defaultDialOpts ...grpc.DialOption) (*Pool, error) {
 	// Validations
 	switch {
 	case opts.StaleTime <= 0:
@@ -100,6 +106,7 @@ func New(opts Options, dialOptions ...grpc.DialOption) (*Pool, error) {
 	p := &Pool{
 		log:  l,
 		opts: opts,
+		m:    newMetrics(opts),
 
 		clients:       make(map[string]*client, opts.MaxClients),
 		reverseLookup: make(map[*grpc.ClientConn]*client),
@@ -113,12 +120,15 @@ func New(opts Options, dialOptions ...grpc.DialOption) (*Pool, error) {
 	var fullDialOptions []grpc.DialOption
 	fullDialOptions = append(fullDialOptions, grpc.WithUnaryInterceptor(unaryLastUsedInterceptor(p)))
 	fullDialOptions = append(fullDialOptions, grpc.WithStreamInterceptor(streamLastUsedInterceptor(p)))
-	fullDialOptions = append(fullDialOptions, dialOptions...)
+	fullDialOptions = append(fullDialOptions, defaultDialOpts...)
 	p.dialOpts = fullDialOptions
 
 	go p.run(ctx)
 	return p, nil
 }
+
+// Metrics returns metrics for the Pool.
+func (p *Pool) Metrics() prometheus.Collector { return p.m }
 
 func (p *Pool) run(ctx context.Context) {
 	defer close(p.exited)
@@ -147,6 +157,14 @@ func (p *Pool) removeStaleClients() {
 	p.clientsMut.Lock()
 	defer p.clientsMut.Unlock()
 
+	p.m.gcActive.Set(1)
+	defer p.m.gcActive.Set(0)
+
+	start := time.Now()
+	defer func() {
+		p.m.gcTotal.Observe(float64(time.Since(start).Seconds()))
+	}()
+
 	for addr, client := range p.clients {
 		stale := time.Since(client.LastUsed) > p.opts.StaleTime
 		if !stale && client.Conn.GetState() != connectivity.Shutdown {
@@ -157,6 +175,8 @@ func (p *Pool) removeStaleClients() {
 		}
 		delete(p.clients, addr)
 		delete(p.reverseLookup, client.Conn)
+		p.m.eventsTotal.WithLabelValues("closed").Inc()
+		p.m.currentConns.Set(float64(len(p.clients)))
 	}
 }
 
@@ -164,14 +184,23 @@ func (p *Pool) removeStaleClients() {
 // provided context will is only used for creating the new connection, and will
 // not close the returned client.
 //
-// If a previous caller closed the returned client, a new one will be
-// generated. It is not recommended to manually close clients; let the
-// connection pool close stale clients instead.
-func (p *Pool) Get(ctx context.Context, addr string) (*grpc.ClientConn, error) {
+// A new connection will be created if there is no existing connection or the
+// existing connection was closed. The provided extraDialOpts will be appended
+// to defaultDialOpts to create the new connection, but are ignored if an
+// existing connection is retrieved.
+//
+// It is not recommended to manually close clients; let the pool close stale
+// clients instead.
+func (p *Pool) Get(ctx context.Context, addr string, extraDialOpts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	p.clientsMut.Lock()
 	defer p.clientsMut.Unlock()
 
+	defer func() {
+		p.m.currentConns.Set(float64(len(p.clients)))
+	}()
+
 	if p.closed {
+		p.m.lookupsTotal.WithLabelValues("error_other").Inc()
 		return nil, fmt.Errorf("clientpool has closed")
 	}
 
@@ -181,6 +210,8 @@ func (p *Pool) Get(ctx context.Context, addr string) (*grpc.ClientConn, error) {
 	entry, ok := p.clients[addr]
 	if ok && entry.Conn.GetState() != connectivity.Shutdown {
 		entry.updateLastUsed()
+
+		p.m.lookupsTotal.WithLabelValues("success").Inc()
 		return entry.Conn, nil
 	}
 	if entry != nil {
@@ -191,15 +222,22 @@ func (p *Pool) Get(ctx context.Context, addr string) (*grpc.ClientConn, error) {
 
 	if p.opts.MaxClients > 0 && len(p.clients)+1 > p.opts.MaxClients {
 		if !p.opts.CleanupLRU {
+			p.m.lookupsTotal.WithLabelValues("error_max_conns").Inc()
 			return nil, fmt.Errorf("maxium number of clients reached")
 		}
 		if err := p.removeLRU(); err != nil {
+			p.m.lookupsTotal.WithLabelValues("error_other").Inc()
 			return nil, err
 		}
 	}
 
-	cc, err := grpc.DialContext(ctx, addr, p.dialOpts...)
+	dialOpts := make([]grpc.DialOption, len(p.dialOpts)+len(extraDialOpts))
+	copy(dialOpts[0:], p.dialOpts)
+	copy(dialOpts[len(p.dialOpts):], extraDialOpts)
+
+	cc, err := grpc.DialContext(ctx, addr, dialOpts)
 	if err != nil {
+		p.m.lookupsTotal.WithLabelValues("error_dial").Inc()
 		return nil, err
 	}
 	entry = &client{
@@ -209,6 +247,9 @@ func (p *Pool) Get(ctx context.Context, addr string) (*grpc.ClientConn, error) {
 	}
 	p.clients[addr] = entry
 	p.reverseLookup[cc] = entry
+
+	p.m.lookupsTotal.WithLabelValues("success").Inc()
+	p.m.eventsTotal.WithLabelValues("opened").Inc()
 	return cc, nil
 }
 
@@ -229,12 +270,10 @@ func (p *Pool) removeLRU() error {
 	}
 
 	err := clients[0].Conn.Close()
-	if err != nil {
-		return err
-	}
+	p.m.eventsTotal.WithLabelValues("closed").Inc()
 	delete(p.clients, clients[0].Addr)
 	delete(p.reverseLookup, clients[0].Conn)
-	return nil
+	return err
 }
 
 // Close closes the client pool. Once the pool is closed, all existing
@@ -252,9 +291,11 @@ func (p *Pool) Close() error {
 		if err != nil {
 			level.Warn(p.log).Log("msg", "failed to close client on shutdown", "err", err)
 		}
+		p.m.eventsTotal.WithLabelValues("closed").Inc()
 	}
 	// Reset the map to empty instead of deleting everything individiually.
 	p.clients = make(map[string]*client)
+	p.m.currentConns.Set(0)
 
 	p.closed = true
 	return nil
