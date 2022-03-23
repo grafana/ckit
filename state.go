@@ -23,6 +23,13 @@ const (
 	StateTerminating
 )
 
+var allStates = []State{
+	StatePending,
+	StateParticipant,
+	StateViewer,
+	StateTerminating,
+}
+
 // String returns the string representation of s.
 func (s State) String() string {
 	switch s {

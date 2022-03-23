@@ -160,10 +160,8 @@ func (p *Pool) removeStaleClients() {
 	p.m.gcActive.Set(1)
 	defer p.m.gcActive.Set(0)
 
-	start := time.Now()
-	defer func() {
-		p.m.gcTotal.Observe(time.Since(start).Seconds())
-	}()
+	timer := prometheus.NewTimer(p.m.gcTotal)
+	defer timer.ObserveDuration()
 
 	for addr, client := range p.clients {
 		stale := time.Since(client.LastUsed) > p.opts.StaleTime

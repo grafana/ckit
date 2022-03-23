@@ -15,6 +15,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/memberlist"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/chash"
 	"github.com/rfratto/ckit/clientpool"
 	"github.com/rfratto/ckit/internal/lamport"
@@ -86,6 +87,7 @@ type Node struct {
 	broadcasts           memberlist.TransmitLimitedQueue
 	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
+	m                    *metrics
 
 	stateMut   sync.RWMutex
 	runCancel  context.CancelFunc
@@ -145,6 +147,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	n := &Node{
 		log: cfg.Log,
 		cfg: cfg,
+		m:   newMetrics(),
 
 		conflictQueue:        queue.New(1),
 		notifyObserversQueue: queue.New(1),
@@ -166,9 +169,14 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	n.ml = ml
 	n.broadcasts.NumNodes = ml.NumMembers
 	n.broadcasts.RetransmitMult = mlc.RetransmitMult
+	n.m.Add(newMemberlistCollector(ml)) // Include memberlist metrics
 
 	return n, nil
 }
+
+// Metrics returns a prometheus.Collector that can be used to collect metrics
+// about the Node.
+func (n *Node) Metrics() prometheus.Collector { return n.m }
 
 // Start runs the Node for clustering with a list of peers to connect to. peers
 // can be an empty list if there is are no peers to connect to; other peers can
@@ -335,6 +343,7 @@ func (n *Node) waitChangeState(ctx context.Context, to State) error {
 
 func (n *Node) changeState(to State, onDone func()) error {
 	n.localState = to
+	n.m.nodeInfo.MustSet("state", to.String())
 
 	stateMsg := messages.State{
 		NodeName: n.cfg.Name,
@@ -394,16 +403,24 @@ func (n *Node) handlePeersChanged() {
 	var (
 		nodeNames = make([]string, 0, len(n.peers))
 		newPeers  = make([]Peer, 0, len(n.peers))
+
+		peerCountByState = make(map[State]int, len(allStates))
 	)
 
 	for nodeName, peer := range n.peers {
 		newPeers = append(newPeers, peer)
+		peerCountByState[peer.State]++
 
 		// nodeNames is used for updating the hash function. We want to ignore
 		// any node which is not StateParticipant.
 		if peer.State == StateParticipant {
 			nodeNames = append(nodeNames, nodeName)
 		}
+	}
+
+	// Update the metric based on the peers we just processed.
+	for state, count := range peerCountByState {
+		n.m.nodePeers.WithLabelValues(state.String()).Set(float64(count))
 	}
 
 	// Sort both slices by name.
@@ -431,11 +448,18 @@ func (n *Node) Observe(o Observer) {
 	n.observersMut.Lock()
 	defer n.observersMut.Unlock()
 	n.observers = append(n.observers, o)
+	n.m.nodeObservers.Set(float64(len(n.observers)))
 }
 
 func (n *Node) notifyObservers(peers []Peer) {
 	n.observersMut.Lock()
 	defer n.observersMut.Unlock()
+
+	n.m.nodeUpdating.Set(1)
+	defer n.m.nodeUpdating.Set(0)
+
+	timer := prometheus.NewTimer(n.m.nodeUpdateDuration)
+	defer timer.ObserveDuration()
 
 	newObservers := make([]Observer, 0, len(n.observers))
 	for _, o := range n.observers {
@@ -446,6 +470,7 @@ func (n *Node) notifyObservers(peers []Peer) {
 	}
 
 	n.observers = newObservers
+	n.m.nodeObservers.Set(float64(len(n.observers)))
 }
 
 // Lookup gets the set of numOwners for key. A key can be created with a
@@ -456,6 +481,7 @@ func (n *Node) notifyObservers(peers []Peer) {
 func (n *Node) Lookup(key uint64, numOwners int) ([]Peer, error) {
 	owners, err := n.cfg.Hash.Get(key, numOwners)
 	if err != nil {
+		n.m.nodeLookupsTotal.WithLabelValues(lookupFailedValue).Inc()
 		return nil, err
 	}
 
@@ -466,6 +492,7 @@ func (n *Node) Lookup(key uint64, numOwners int) ([]Peer, error) {
 	for i, o := range owners {
 		res[i] = n.peers[o]
 	}
+	n.m.nodeLookupsTotal.WithLabelValues(lookupSuccessValue).Inc()
 	return res, nil
 }
 
@@ -504,6 +531,8 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 
 	switch ty {
 	case messages.TypeState:
+		nd.m.gossipEventsTotal.WithLabelValues(eventStateChange).Inc()
+
 		var s messages.State
 		if err := messages.Decode(buf, &s); err != nil {
 			level.Error(nd.log).Log("msg", "failed to decode state message", "err", err)
@@ -512,6 +541,8 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 
 		nd.handleStateMessage(s)
 	default:
+		nd.m.gossipEventsTotal.WithLabelValues(eventUnkownMessage).Inc()
+
 		level.Warn(nd.log).Log("msg", "unexpected gossip message", "ty", ty)
 	}
 }
@@ -523,6 +554,8 @@ func (nd *nodeDelegate) GetBroadcasts(overhead, limit int) [][]byte {
 func (nd *nodeDelegate) LocalState(join bool) []byte {
 	nd.peerMut.RLock()
 	defer nd.peerMut.RUnlock()
+
+	nd.m.gossipEventsTotal.WithLabelValues(eventGetLocalState).Inc()
 
 	ls := localState{
 		NodeStates: make([]messages.State, 0, len(nd.peers)),
@@ -564,6 +597,8 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
+
+	nd.m.gossipEventsTotal.WithLabelValues(eventMergeRemoteState).Inc()
 
 	// Build a map of remote states by name to optimize lookups.
 	remoteStates := make(map[string]messages.State, len(rs.NodeStates))
@@ -635,13 +670,29 @@ func decodeLocalState(buf []byte) (*localState, error) {
 //
 
 func (nd *nodeDelegate) NotifyJoin(node *memberlist.Node) {
-	nd.NotifyUpdate(node)
+	nd.peerMut.Lock()
+	defer nd.peerMut.Unlock()
+
+	nd.m.gossipEventsTotal.WithLabelValues(eventNodeJoin).Inc()
+	nd.updatePeer(nd.nodeToPeer(node))
+}
+
+// nodeToPeer converts a memberlist Node to a Peer. Should only be called with
+// peerMut held.
+func (nd *nodeDelegate) nodeToPeer(node *memberlist.Node) Peer {
+	return Peer{
+		Name:  node.Name,
+		Addr:  node.Address(),
+		Self:  node.Name == nd.cfg.Name,
+		State: State(nd.peerStates[node.Name].NewState),
+	}
 }
 
 func (nd *nodeDelegate) NotifyLeave(node *memberlist.Node) {
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
 
+	nd.m.gossipEventsTotal.WithLabelValues(eventNodeLeave).Inc()
 	nd.removePeer(node.Name)
 }
 
@@ -649,13 +700,8 @@ func (nd *nodeDelegate) NotifyUpdate(node *memberlist.Node) {
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
 
-	p := Peer{
-		Name:  node.Name,
-		Addr:  node.Address(),
-		Self:  node.Name == nd.cfg.Name,
-		State: State(nd.peerStates[node.Name].NewState),
-	}
-	nd.updatePeer(p)
+	nd.m.gossipEventsTotal.WithLabelValues(eventNodeUpdate).Inc()
+	nd.updatePeer(nd.nodeToPeer(node))
 }
 
 func (nd *nodeDelegate) updatePeer(p Peer) {
@@ -673,5 +719,6 @@ func (nd *nodeDelegate) removePeer(name string) {
 //
 
 func (nd *nodeDelegate) NotifyConflict(existing, other *memberlist.Node) {
+	nd.m.gossipEventsTotal.WithLabelValues(eventNodeConflict).Inc()
 	nd.conflictQueue.Enqueue(other)
 }

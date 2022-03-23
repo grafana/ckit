@@ -1,8 +1,13 @@
 package clientpool
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rfratto/ckit/internal/metricsutil"
+)
 
 type metrics struct {
+	container metricsutil.Container
+
 	currentConns prometheus.Gauge
 	gcActive     prometheus.Gauge
 	gcTotal      prometheus.Histogram
@@ -54,6 +59,16 @@ func newMetrics(o Options) *metrics {
 	m.maxConns.Set(float64(o.MaxClients))
 	m.autoClose.Set(boolToFloat64(o.CleanupLRU))
 
+	m.container.Add(
+		m.currentConns,
+		m.gcActive,
+		m.gcTotal,
+		m.eventsTotal,
+		m.lookupsTotal,
+		m.maxConns,
+		m.autoClose,
+	)
+
 	return &m
 }
 
@@ -65,21 +80,9 @@ func boolToFloat64(b bool) float64 {
 }
 
 func (m *metrics) Describe(ch chan<- *prometheus.Desc) {
-	m.currentConns.Describe(ch)
-	m.gcActive.Describe(ch)
-	m.gcTotal.Describe(ch)
-	m.eventsTotal.Describe(ch)
-	m.lookupsTotal.Describe(ch)
-	m.maxConns.Describe(ch)
-	m.autoClose.Describe(ch)
+	m.container.Describe(ch)
 }
 
 func (m *metrics) Collect(ch chan<- prometheus.Metric) {
-	m.currentConns.Collect(ch)
-	m.gcActive.Collect(ch)
-	m.gcTotal.Collect(ch)
-	m.eventsTotal.Collect(ch)
-	m.lookupsTotal.Collect(ch)
-	m.maxConns.Collect(ch)
-	m.autoClose.Collect(ch)
+	m.container.Collect(ch)
 }
