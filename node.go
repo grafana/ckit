@@ -297,6 +297,8 @@ func (n *Node) ChangeState(ctx context.Context, to State) error {
 		return ErrStateTransition(t)
 	}
 
+	level.Debug(n.log).Log("msg", "changing node state", "from", n.localState, "to", to)
+
 	return n.waitChangeState(ctx, to)
 }
 
