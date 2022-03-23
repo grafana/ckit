@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // Multiprobe implements a multi-probe hash: https://arxiv.org/abs/1505.00062
@@ -78,9 +80,9 @@ func (mp *multiprobe) Get(key uint64, n int) ([]string, error) {
 }
 
 func secondKey(key1 uint64) uint64 {
-	kb := NewKeyBuilder()
-	_, _ = kb.Write(strconv.AppendUint(nil, key1, 16))
-	return kb.Key()
+	dig := xxhash.New()
+	_, _ = dig.Write(strconv.AppendUint(nil, key1, 16))
+	return dig.Sum64()
 }
 
 // findClosest returns the index of the tok whose distance to "to" is the
@@ -123,7 +125,7 @@ func (mp *multiprobe) SetNodes(nodes []string) {
 	for i, n := range nodes {
 		newTokens[i] = ringToken{
 			node:  n,
-			token: Key(n),
+			token: xxhash.Sum64String(n),
 		}
 	}
 	sort.Sort(byRingToken(newTokens))

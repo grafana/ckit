@@ -1,4 +1,4 @@
-package chash
+package ckit
 
 import (
 	"fmt"
@@ -46,5 +46,5 @@ func TestKeyBuilder_Key_Equivalence(t *testing.T) {
 	kb := NewKeyBuilder()
 	_, _ = fmt.Fprint(kb, in)
 
-	require.Equal(t, kb.Key(), Key(in))
+	require.Equal(t, kb.Key(), StringKey(in))
 }

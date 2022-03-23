@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // Rendezvous returns a rendezvous hashing algorithm (HRW, Highest Random
@@ -56,7 +58,7 @@ func (r *rendezvous) SetNodes(nodes []string) {
 		newNodes  = make([]string, len(nodes))
 	)
 	for i, n := range nodes {
-		newHashes[n] = Key(n)
+		newHashes[n] = xxhash.Sum64String(n)
 		newNodes[i] = n
 	}
 	sort.Strings(newNodes)

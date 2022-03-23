@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/rfratto/ckit/chash"
 	"github.com/rfratto/ckit/internal/testlogger"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -30,7 +29,7 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 	cfg := Config{
 		Name:          name,
 		AdvertiseAddr: lis.Addr().String(),
-		Hash:          chash.Ring(128),
+		Hasher:        RingHasher(128),
 		Log:           log.With(l, "node", name),
 	}
 
@@ -57,11 +56,11 @@ func runTestNode(t *testing.T, n *Node, join []string) {
 }
 
 func TestNode_State(t *testing.T) {
-	t.Run("initial state should be pending", func(t *testing.T) {
+	t.Run("initial state should be viewer", func(t *testing.T) {
 		n, _ := newTestNode(t, testlogger.New(t), "node-a")
 		runTestNode(t, n, nil)
 
-		require.Equal(t, StatePending, n.CurrentState())
+		require.Equal(t, StateViewer, n.CurrentState())
 	})
 
 	t.Run("can move states", func(t *testing.T) {
@@ -94,7 +93,9 @@ func TestNode_State(t *testing.T) {
 		// We then want to check that each node is (eventually) aware of the other
 		// node's new state.
 		require.NoError(t, a.ChangeState(ctx, StateParticipant))
-		require.NoError(t, b.ChangeState(ctx, StateViewer))
+
+		require.NoError(t, b.ChangeState(ctx, StateParticipant))
+		require.NoError(t, b.ChangeState(ctx, StateTerminating))
 
 		// Wait for node-b to receive node-a's state change.
 		require.Eventually(t, func() bool {
@@ -116,84 +117,11 @@ func TestNode_State(t *testing.T) {
 				if peer.Name != "node-b" {
 					continue
 				}
-				return peer.State == StateViewer
+				return peer.State == StateTerminating
 			}
 
 			return false
 		}, 30*time.Second, time.Millisecond*250)
-	})
-}
-
-func TestNode_Lookup(t *testing.T) {
-	t.Run("doesn't count local node if not StateParticipant", func(t *testing.T) {
-		n, nAddr := newTestNode(t, testlogger.New(t), "node-a")
-		runTestNode(t, n, nil)
-
-		// The first lookup should fail since our node isn't in StateParticipant
-		_, err := n.Lookup(0, 1)
-		require.EqualError(t, err, "not enough nodes: need at least 1, have 0")
-
-		// Then change to StateParticipant; we should be useable for a lookup now.
-		require.NoError(t, n.ChangeState(context.Background(), StateParticipant))
-		ps, err := n.Lookup(0, 1)
-		require.NoError(t, err)
-		require.Len(t, ps, 1)
-
-		expectPeer := Peer{
-			Name:  "node-a",
-			Addr:  nAddr,
-			Self:  true,
-			State: StateParticipant,
-		}
-		require.Equal(t, expectPeer, ps[0])
-	})
-
-	t.Run("doesn't count remote node if not StateParticipant", func(t *testing.T) {
-		var (
-			l   = testlogger.New(t)
-			ctx = context.Background()
-
-			a, aAddr = newTestNode(t, l, "node-a")
-			b, bAddr = newTestNode(t, l, "node-b")
-		)
-
-		runTestNode(t, a, nil)
-		runTestNode(t, b, []string{aAddr})
-
-		require.Eventually(t, func() bool {
-			return len(a.Peers()) == 2
-		}, 15*time.Second, 500*time.Millisecond)
-
-		// The first lookup should fail since our node isn't in StateParticipant
-		_, err := a.Lookup(0, 1)
-		require.EqualError(t, err, "not enough nodes: need at least 1, have 0")
-
-		// Then change node-b to StateParticipant; it should be useable for a
-		// lookup now.
-		require.NoError(t, b.ChangeState(ctx, StateParticipant))
-
-		require.Eventually(t, func() bool {
-			aPeers := a.Peers()
-			for _, peer := range aPeers {
-				if peer.Name != "node-b" {
-					continue
-				}
-				return peer.State == StateParticipant
-			}
-			return false
-		}, 30*time.Second, time.Millisecond*250)
-
-		ps, err := a.Lookup(0, 1)
-		require.NoError(t, err)
-		require.Len(t, ps, 1)
-
-		expectPeer := Peer{
-			Name:  "node-b",
-			Addr:  bAddr,
-			Self:  false,
-			State: StateParticipant,
-		}
-		require.Equal(t, expectPeer, ps[0])
 	})
 }
 
@@ -308,9 +236,9 @@ func TestNode_Peers(t *testing.T) {
 		}, 15*time.Second, 250*time.Millisecond)
 
 		expectPeers := []Peer{
-			{Name: "node-a", Addr: aAddr, Self: true, State: StatePending},
-			{Name: "node-b", Addr: bAddr, Self: false, State: StatePending},
-			{Name: "node-c", Addr: cAddr, Self: false, State: StatePending},
+			{Name: "node-a", Addr: aAddr, Self: true, State: StateViewer},
+			{Name: "node-b", Addr: bAddr, Self: false, State: StateViewer},
+			{Name: "node-c", Addr: cAddr, Self: false, State: StateViewer},
 		}
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})
@@ -344,8 +272,8 @@ func TestNode_Peers(t *testing.T) {
 		}, 15*time.Second, 250*time.Millisecond)
 
 		expectPeers := []Peer{
-			{Name: "node-a", Addr: aAddr, Self: true, State: StatePending},
-			{Name: "node-b", Addr: bAddr, Self: false, State: StatePending},
+			{Name: "node-a", Addr: aAddr, Self: true, State: StateViewer},
+			{Name: "node-b", Addr: bAddr, Self: false, State: StateViewer},
 		}
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})

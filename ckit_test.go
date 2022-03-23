@@ -11,7 +11,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit"
-	"github.com/rfratto/ckit/chash"
 	"google.golang.org/grpc"
 )
 
@@ -38,7 +37,7 @@ func Example() {
 		AdvertiseAddr: lis.Addr().String(),
 
 		// Hash to use for ownership checks.
-		Hash: chash.Rendezvous(),
+		Hasher: ckit.RendezvousHasher(),
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
@@ -92,7 +91,7 @@ func Example() {
 
 	// Get the list of owners for some-key. We're the only node, so it should
 	// return ourselves.
-	owners, err := node.Lookup(chash.Key("some-key"), 1)
+	owners, err := node.Lookup(ckit.StringKey("some-key"), 1, ckit.HashTypeReadWrite)
 	if err != nil {
 		panic(err)
 	}

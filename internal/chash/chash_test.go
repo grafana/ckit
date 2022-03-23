@@ -7,6 +7,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +31,7 @@ func TestHashes_Consistent(t *testing.T) {
 			// Setting up 3 nodes should return those three unique nodes, in some order.
 			var (
 				nodes = []string{"node-a", "node-b", "node-c"}
-				key   = Key("some-key")
+				key   = xxhash.Sum64String("some-key")
 			)
 
 			h.SetNodes(nodes)
@@ -96,7 +97,7 @@ func TestHashes_Distribution(t *testing.T) {
 
 			// Hash numHashes random keys.
 			for i := 0; i < numHashes; i++ {
-				owners, err := h.Get(Key(randStr()), 1)
+				owners, err := h.Get(xxhash.Sum64String(randStr()), 1)
 				require.NoError(t, err)
 				for _, owner := range owners {
 					nodeDist[owner]++
@@ -169,7 +170,7 @@ func runBenchmarkHashes(b *testing.B, numNodes int) {
 			for n := 0; n < b.N; n++ {
 				key := make([]byte, 5)
 				_, _ = r.Read(key)
-				_, _ = h.Get(Key(fmt.Sprintf("%2x", key)), 3)
+				_, _ = h.Get(xxhash.Sum64String(fmt.Sprintf("%2x", key)), 3)
 			}
 		})
 	}

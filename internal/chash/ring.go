@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"unsafe"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // Ring implements a ring consistent hash. numTokens determines how many tokens
@@ -78,8 +80,8 @@ func (r *ringHash) Get(key uint64, n int) ([]string, error) {
 func (r *ringHash) SetNodes(nodes []string) {
 	toks := make([]ringToken, 0, len(nodes)*r.numTokens)
 	for _, node := range nodes {
-		kb := NewKeyBuilder()
-		_, _ = kb.Write(unsafeSlice(node))
+		dig := xxhash.New()
+		_, _ = dig.Write(unsafeSlice(node))
 
 		// We'll continually append extra data to kb to generate all the tokens for
 		// our node. This data doesn't have to be singificant, so we'll use the
@@ -88,11 +90,11 @@ func (r *ringHash) SetNodes(nodes []string) {
 
 		for t := 0; t < r.numTokens; t++ {
 			tokData[0] = byte(t)
-			_, _ = kb.Write(tokData)
+			_, _ = dig.Write(tokData)
 
 			toks = append(toks, ringToken{
 				node:  node,
-				token: kb.Key(),
+				token: dig.Sum64(),
 			})
 		}
 	}

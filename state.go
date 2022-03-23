@@ -7,38 +7,34 @@ import "fmt"
 type State uint
 
 const (
-	// StatePending is the default state. Nodes in the Pending state should not
-	// be used for hashing.
-	StatePending State = iota
+	// StateViewer is the default state. Nodes in the Viewer state have a
+	// read-only view of the cluster, and are never considered owners when
+	// hashing.
+	StateViewer State = iota
 
-	// StateParticipant allows a Node to be used for hashing.
+	// StateParticipant marks a node as available to receive writes. It will be
+	// considered a potential owner while hashing read or write operations.
 	StateParticipant
 
-	// StateViewer allows a Node to have a read-only view of the cluster: the
-	// node itself will never be considered for hashing.
-	StateViewer
-
-	// StateTerminating is used when a node is shutting down. Terminating nodes
-	// should not be used for hashing.
+	// StateTerminating is used when a Participant node is shutting down.
+	// Terminating nodes are considered potential owners while hashing read
+	// operations.
 	StateTerminating
 )
 
 var allStates = []State{
-	StatePending,
-	StateParticipant,
 	StateViewer,
+	StateParticipant,
 	StateTerminating,
 }
 
 // String returns the string representation of s.
 func (s State) String() string {
 	switch s {
-	case StatePending:
-		return "pending"
-	case StateParticipant:
-		return "participant"
 	case StateViewer:
 		return "viewer"
+	case StateParticipant:
+		return "participant"
 	case StateTerminating:
 		return "terminating"
 	default:

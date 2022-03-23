@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/chash"
 	"github.com/rfratto/ckit/clientpool"
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
@@ -40,8 +39,9 @@ type Config struct {
 	// Required.
 	AdvertiseAddr string
 
-	// Hashing algorithm to use when determining ownership for a key. Required.
-	Hash chash.Hash
+	// Hasher to use to determine ownership of a key. Required. Node will take
+	// ownership of Hasher after being created; do not manually call SetNodes.
+	Hasher Hasher
 
 	// Optional logger to use.
 	Log log.Logger
@@ -60,8 +60,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("advertise address is required")
 	}
 
-	if c.Hash == nil {
-		return fmt.Errorf("hash function is required")
+	if c.Hasher == nil {
+		return fmt.Errorf("hasher is required")
 	}
 
 	if c.Log == nil {
@@ -183,7 +183,7 @@ func (n *Node) Metrics() prometheus.Collector { return n.m }
 // then connect to this node in their own Start methods.
 //
 // Start may be called multiple times to reconnect to a different set of peers.
-// Node will be set into StatePending every time Start is called.
+// Node will be set into StateViewer every time Start is called.
 //
 // Start may not be called after the Node has been stopped.
 func (n *Node) Start(peers []string) error {
@@ -199,7 +199,7 @@ func (n *Node) Start(peers []string) error {
 	}
 
 	// Force ourselves back into the pending state.
-	if err := n.changeState(StatePending, nil); err != nil {
+	if err := n.changeState(StateViewer, nil); err != nil {
 		return err
 	}
 
@@ -293,10 +293,10 @@ func (n *Node) CurrentState() State {
 // The "to" state must be valid to move to from the current state. Acceptable
 // transitions are:
 //
-//   StatePending -> StateParticipant|StateViewer|StateTerminating|StateGone
-//   StateParticipant -> StateTerminating|StateGone
-//   StateViewer -> StateTerminating|StateGone
-//   StateTerminating -> StateGone
+//   StateViewer -> StateParticipant
+//   StateParticipant -> StateTerminating
+//
+// Nodes intended to only be viewers should never transition to another state.
 func (n *Node) ChangeState(ctx context.Context, to State) error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
@@ -314,11 +314,8 @@ func (n *Node) ChangeState(ctx context.Context, to State) error {
 type stateTransition struct{ From, To State }
 
 var validStateTransitions = map[stateTransition]struct{}{
-	{StatePending, StateParticipant}:     {},
-	{StatePending, StateViewer}:          {},
-	{StatePending, StateTerminating}:     {},
+	{StateViewer, StateParticipant}:      {},
 	{StateParticipant, StateTerminating}: {},
-	{StateViewer, StateTerminating}:      {},
 }
 
 func (n *Node) waitChangeState(ctx context.Context, to State) error {
@@ -412,21 +409,14 @@ func (n *Node) Peers() []Peer {
 // peerMut should be held when this function is called.
 func (n *Node) handlePeersChanged() {
 	var (
-		nodeNames = make([]string, 0, len(n.peers))
-		newPeers  = make([]Peer, 0, len(n.peers))
+		newPeers = make([]Peer, 0, len(n.peers))
 
 		peerCountByState = make(map[State]int, len(allStates))
 	)
 
-	for nodeName, peer := range n.peers {
+	for _, peer := range n.peers {
 		newPeers = append(newPeers, peer)
 		peerCountByState[peer.State]++
-
-		// nodeNames is used for updating the hash function. We want to ignore
-		// any node which is not StateParticipant.
-		if peer.State == StateParticipant {
-			nodeNames = append(nodeNames, nodeName)
-		}
 	}
 
 	// Update the metric based on the peers we just processed.
@@ -435,17 +425,14 @@ func (n *Node) handlePeersChanged() {
 		n.m.nodePeers.WithLabelValues(state.String()).Set(float64(count))
 	}
 
-	// Sort both slices by name.
-	sort.Slice(nodeNames, func(i, j int) bool {
-		return nodeNames[i] < nodeNames[j]
-	})
+	// Sort the new peers by name.
 	sort.Slice(newPeers, func(i, j int) bool {
 		return newPeers[i].Name < newPeers[j].Name
 	})
 
-	n.cfg.Hash.SetNodes(nodeNames)
-
+	n.cfg.Hasher.SetPeers(newPeers)
 	n.peerCache = newPeers
+
 	n.notifyObserversQueue.Enqueue(newPeers)
 }
 
@@ -486,26 +473,18 @@ func (n *Node) notifyObservers(peers []Peer) {
 }
 
 // Lookup gets the set of numOwners for key. A key can be created with a
-// chash.KeyBuilder or by calling chash.Key.
+// KeyBuilder or by calling StringKey.
 //
 // An error will be returned if there are less than numOwners peers being used
 // for hashing.
-func (n *Node) Lookup(key uint64, numOwners int) ([]Peer, error) {
-	owners, err := n.cfg.Hash.Get(key, numOwners)
+func (n *Node) Lookup(key Key, numOwners int, ty HashType) ([]Peer, error) {
+	ps, err := n.cfg.Hasher.Lookup(key, numOwners, ty)
 	if err != nil {
 		n.m.nodeLookupsTotal.WithLabelValues(lookupFailedValue).Inc()
 		return nil, err
 	}
-
-	n.peerMut.RLock()
-	defer n.peerMut.RUnlock()
-
-	res := make([]Peer, len(owners))
-	for i, o := range owners {
-		res[i] = n.peers[o]
-	}
 	n.m.nodeLookupsTotal.WithLabelValues(lookupSuccessValue).Inc()
-	return res, nil
+	return ps, nil
 }
 
 // nodeDelegate is used to implement memberlist.*Delegate types without
@@ -587,7 +566,7 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 
 		ls.NodeStates = append(ls.NodeStates, messages.State{
 			NodeName: p,
-			NewState: int(StatePending),
+			NewState: int(StateViewer),
 			Time:     lamport.Time(0),
 		})
 	}
