@@ -10,7 +10,7 @@ import (
 )
 
 // DefaultInterfaces is a default list of common interfaces that are used for
-// local network traffic.
+// local network traffic for Unix-like platforms.
 var DefaultInterfaces = []string{"eth0", "en0"}
 
 // FirstAddress returns the first IPv4 address from the given interface names.
