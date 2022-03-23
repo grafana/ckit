@@ -419,7 +419,8 @@ func (n *Node) handlePeersChanged() {
 	}
 
 	// Update the metric based on the peers we just processed.
-	for state, count := range peerCountByState {
+	for _, state := range allStates {
+		count := peerCountByState[state]
 		n.m.nodePeers.WithLabelValues(state.String()).Set(float64(count))
 	}
 
