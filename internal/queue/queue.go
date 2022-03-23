@@ -31,6 +31,7 @@ type entry struct {
 	Time  lamport.Time
 }
 
+// New creates a new Queue.
 func New(limit int) *Queue {
 	return &Queue{
 		sema:  &sync.Cond{L: &sync.Mutex{}},
@@ -97,7 +98,7 @@ func (q *Queue) TryDequeue() (interface{}, bool) {
 	return nil, false
 }
 
-// Enqueue queues an item. Messages are guarenteed to be dequeued in call order.
+// Enqueue queues an item. Messages are guaranteed to be dequeued in call order.
 // If the queue has reached its limit, the oldest message will be discarded.
 func (q *Queue) Enqueue(v interface{}) {
 	element := entry{Time: q.clock.Tick(), Value: v}

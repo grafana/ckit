@@ -74,11 +74,3 @@ func xorshiftMult64(x uint64) uint64 {
 	x ^= x >> 27 // c
 	return x * 2685821657736338717
 }
-
-// insertAt adds s into ss at n and pushes other elements back.
-func insertAt(ss []string, s string, n int) {
-	for i := len(ss) - 1; i > n; i-- {
-		ss[i] = ss[i-1]
-	}
-	ss[n] = s
-}

@@ -9,8 +9,8 @@ import (
 )
 
 // GRPCDialer returns a gRPC DialOption which will connect to the memconn
-// Listener for addressess with the memconn string (i.e., `memconn:`). All
-// other addressess will fall back to the next net.Dialer. If next is nil, the
+// Listener for addresses with the memconn string (i.e., `memconn:`). All other
+// addresses will fall back to the next net.Dialer. If next is nil, the
 // default dialer will be used.
 func GRPCDialer(lis *Listener, next *net.Dialer) grpc.DialOption {
 	if next == nil {

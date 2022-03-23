@@ -17,9 +17,10 @@ const magicHeader uint16 = 0x1201
 // what message was sent during decoding.
 type Type uint8
 
+// Types for messages.
 const (
-	TypeInvalid Type = iota // Invalid type, should not be used
-	TypeState               // State broadcast
+	TypeInvalid Type = iota // TypeInvalid is an invalid type.
+	TypeState               // TypeState is used for a State broadcast
 )
 
 var knownTypes = map[Type]string{
@@ -61,7 +62,7 @@ func Encode(m Message) (raw []byte, err error) {
 	buf := bytes.NewBuffer(nil)
 
 	// Write magic header and type
-	binary.Write(buf, binary.BigEndian, magicHeader)
+	_ = binary.Write(buf, binary.BigEndian, magicHeader)
 	buf.WriteByte(uint8(ty))
 
 	// Then add the message

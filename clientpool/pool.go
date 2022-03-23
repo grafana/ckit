@@ -162,7 +162,7 @@ func (p *Pool) removeStaleClients() {
 
 	start := time.Now()
 	defer func() {
-		p.m.gcTotal.Observe(float64(time.Since(start).Seconds()))
+		p.m.gcTotal.Observe(time.Since(start).Seconds())
 	}()
 
 	for addr, client := range p.clients {

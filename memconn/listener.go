@@ -20,6 +20,7 @@ type Listener struct {
 
 var _ net.Listener = (*Listener)(nil)
 
+// NewListener creates a new in-memory Listener.
 func NewListener(l log.Logger) *Listener {
 	if l == nil {
 		l = log.NewNopLogger()
