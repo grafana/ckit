@@ -229,13 +229,22 @@ func (n *Node) Start(peers []string) error {
 }
 
 func (n *Node) run(ctx context.Context) {
+	var lastPeers []Peer
+
 	for {
 		v, err := n.notifyObserversQueue.Dequeue(ctx)
 		if err != nil {
 			break
 		}
+		peers := v.([]Peer)
 
-		n.notifyObservers(v.([]Peer))
+		// Ignore events if the peer set hasn't changed.
+		if peersEqual(lastPeers, peers) {
+			continue
+		}
+		lastPeers = peers
+
+		n.notifyObservers(peers)
 	}
 }
 
