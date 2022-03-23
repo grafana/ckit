@@ -39,10 +39,6 @@ type Config struct {
 	// Required.
 	AdvertiseAddr string
 
-	// Hasher to use to determine ownership of a key. Required. Node will take
-	// ownership of Hasher after being created; do not manually call SetNodes.
-	Hasher Hasher
-
 	// Optional logger to use.
 	Log log.Logger
 
@@ -60,10 +56,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("advertise address is required")
 	}
 
-	if c.Hasher == nil {
-		return fmt.Errorf("hasher is required")
-	}
-
 	if c.Log == nil {
 		c.Log = log.NewNopLogger()
 	}
@@ -79,7 +71,11 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// A Node is a participant in a cluster.
+// A Node is a participant in a cluster. Nodes keep track of all of their peers
+// and emit events to Observers when the cluster state changes.
+//
+// See the hash package for utilities to watch the cluster for changes and
+// calculate which node in the cluster is responsible for a certain object.
 type Node struct {
 	log                  log.Logger
 	cfg                  Config
@@ -402,9 +398,8 @@ func (n *Node) Peers() []Peer {
 	return n.peerCache
 }
 
-// handlePeersChanged should be called when the peers map is updated. The hash
-// and peer cache will be updated before notifying observers that peers have
-// changed.
+// handlePeersChanged should be called when the peers map is updated. The peer
+// cache will be updated before notifying observers that peers have changed.
 //
 // peerMut should be held when this function is called.
 func (n *Node) handlePeersChanged() {
@@ -430,9 +425,7 @@ func (n *Node) handlePeersChanged() {
 		return newPeers[i].Name < newPeers[j].Name
 	})
 
-	n.cfg.Hasher.SetPeers(newPeers)
 	n.peerCache = newPeers
-
 	n.notifyObserversQueue.Enqueue(newPeers)
 }
 
@@ -472,21 +465,6 @@ func (n *Node) notifyObservers(peers []Peer) {
 	n.m.nodeObservers.Set(float64(len(n.observers)))
 }
 
-// Lookup gets the set of numOwners for key. A key can be created with a
-// KeyBuilder or by calling StringKey.
-//
-// An error will be returned if there are less than numOwners peers being used
-// for hashing.
-func (n *Node) Lookup(key Key, numOwners int, ty HashType) ([]Peer, error) {
-	ps, err := n.cfg.Hasher.Lookup(key, numOwners, ty)
-	if err != nil {
-		n.m.nodeLookupsTotal.WithLabelValues(lookupFailedValue).Inc()
-		return nil, err
-	}
-	n.m.nodeLookupsTotal.WithLabelValues(lookupSuccessValue).Inc()
-	return ps, nil
-}
-
 // nodeDelegate is used to implement memberlist.*Delegate types without
 // exposing their methods publicly.
 type nodeDelegate struct {
@@ -506,10 +484,6 @@ var (
 
 func (nd *nodeDelegate) NodeMeta(limit int) []byte {
 	// Nodes don't have any additional metadata to send; return nil.
-
-	// TODO(rfratto): We should consider returning metadata that describes the
-	// current hashing algorithm so nodes can decide if they should reject
-	// mismatching algorithms.
 	return nil
 }
 

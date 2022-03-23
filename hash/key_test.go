@@ -1,4 +1,4 @@
-package ckit
+package hash
 
 import (
 	"fmt"

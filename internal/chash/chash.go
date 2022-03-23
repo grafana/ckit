@@ -1,4 +1,5 @@
-// Package chash implements a set of different consistent hashing algorithms.
+// Package chash implements an set of low-level consistent hashing algorithms.
+// A higher level API is exposed by the hash package.
 package chash
 
 // Hash is a consistent hashing algorithm. Implementations of Hash are

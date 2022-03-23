@@ -3,7 +3,6 @@ package ckit_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -23,21 +22,14 @@ func Example() {
 	grpcServer := grpc.NewServer()
 
 	// Create a config to use for joining the cluster. The config must at least
-	// have a unique name for the node in the cluster, the address that other
-	// nodes can connect to using gRPC, and a consistent hashing algorithm used
-	// for distributing messages.
-	//
-	// Here we use Rendezvous hashing, which can lookup an owner in O(N) time and
-	// has very good distribution.
+	// have a unique name for the node in the cluster, and the address that other
+	// nodes can connect to using gRPC.
 	cfg := ckit.Config{
 		// Name of the discoverer. Must be unique.
 		Name: "first-node",
 
 		// AdvertiseAddr will be the address shared with other nodes.
 		AdvertiseAddr: lis.Addr().String(),
-
-		// Hash to use for ownership checks.
-		Hasher: ckit.RendezvousHasher(),
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
@@ -82,22 +74,11 @@ func Example() {
 	}
 	defer node.Stop()
 
-	// Nodes initially join the cluster in the Pending state. They must move to a
-	// Participant state if they wish to participate in hashing.
+	// Nodes initially join the cluster in the Viewer state. We can move to the
+	// Participant state to signal that we wish to participate in reading or
+	// writing data.
 	err = node.ChangeState(context.Background(), ckit.StateParticipant)
 	if err != nil {
 		panic(err)
 	}
-
-	// Get the list of owners for some-key. We're the only node, so it should
-	// return ourselves.
-	owners, err := node.Lookup(ckit.StringKey("some-key"), 1, ckit.HashTypeReadWrite)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Owners of some-key: %s\n", owners[0].Name)
-
-	// Output:
-	// Owners of some-key: first-node
 }

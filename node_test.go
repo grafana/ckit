@@ -29,7 +29,6 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 	cfg := Config{
 		Name:          name,
 		AdvertiseAddr: lis.Addr().String(),
-		Hasher:        RingHasher(128),
 		Log:           log.With(l, "node", name),
 	}
 

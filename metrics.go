@@ -6,12 +6,6 @@ import (
 	"github.com/rfratto/ckit/internal/metricsutil"
 )
 
-// Possible label values for metrics.nodeLookupsTotal
-const (
-	lookupFailedValue  = "0"
-	lookupSuccessValue = "1"
-)
-
 // Possible label values for metrics.gossipEventsTotal
 const (
 	eventStateChange      = "state_change_message"
@@ -31,7 +25,6 @@ type metrics struct {
 
 	gossipEventsTotal  *prometheus.CounterVec
 	nodePeers          *prometheus.GaugeVec
-	nodeLookupsTotal   *prometheus.CounterVec
 	nodeUpdating       prometheus.Gauge
 	nodeUpdateDuration prometheus.Histogram
 	nodeObservers      prometheus.Gauge
@@ -52,11 +45,6 @@ func newMetrics() *metrics {
 		Name: "cluster_node_peers",
 		Help: "Current number of healthy peers by state",
 	}, []string{"state"})
-
-	m.nodeLookupsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "cluster_node_lookups_total",
-		Help: "Total number of times a hash lookup was performed.",
-	}, []string{"success"})
 
 	m.nodeUpdating = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "cluster_node_updating",
@@ -82,7 +70,6 @@ func newMetrics() *metrics {
 	m.Add(
 		m.gossipEventsTotal,
 		m.nodePeers,
-		m.nodeLookupsTotal,
 		m.nodeUpdating,
 		m.nodeUpdateDuration,
 		m.nodeObservers,
