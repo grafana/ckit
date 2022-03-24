@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/rfratto/ckit/clientpool"
 	pb "github.com/rfratto/ckit/internal/httpgrpcpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -84,29 +85,29 @@ func getCallerAddr(ctx context.Context) string {
 	return p.Addr.String()
 }
 
-// ClientTransport returns an http.RoundTripper that uses the provided
-// *grpc.ClientConn for sending HTTP requests over gRPC.
-func ClientTransport(cc *grpc.ClientConn) http.RoundTripper {
-	return &clientRT{cli: pb.NewTransportClient(cc)}
+// ClientTransport returns an http.RoundTripper that uses the gRPC client pool
+// for sending HTTP requests over gRPC.
+func ClientTransport(p *clientpool.Pool) http.RoundTripper {
+	return &poolRT{p: p}
 }
 
-type clientRT struct {
-	cli pb.TransportClient
-}
+type poolRT struct{ p *clientpool.Pool }
 
-func (rt *clientRT) RoundTrip(r *http.Request) (*http.Response, error) {
-	sendHeaders := r.Header.Clone()
-	if host := r.URL.Host; host != "" {
-		sendHeaders.Add("Host", host)
+func (rt *poolRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body != nil {
+		defer r.Body.Close()
 	}
-	if r.Host != "" {
-		sendHeaders.Add("Host", r.Host)
+
+	cc, err := rt.p.Get(r.Context(), r.URL.Host)
+	if err != nil {
+		return nil, err
 	}
+	cli := pb.NewTransportClient(cc)
 
 	pbReq := &pb.Request{
 		Method: r.Method,
 		Uri:    r.URL.RequestURI(),
-		Header: convertHeaders(sendHeaders),
+		Header: convertHeaders(r.Header.Clone()),
 	}
 	if r.Body != nil {
 		bb, err := io.ReadAll(r.Body)
@@ -120,7 +121,7 @@ func (rt *clientRT) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 	}
 
-	pbResp, err := rt.cli.Handle(r.Context(), pbReq)
+	pbResp, err := cli.Handle(r.Context(), pbReq)
 	if err != nil {
 		return nil, err
 	}

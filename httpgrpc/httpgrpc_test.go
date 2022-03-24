@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rfratto/ckit/clientpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -17,11 +18,10 @@ import (
 
 func Test(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
-		cli := newTestServer(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		cli, baseURL := newTestServer(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, http.MethodGet, r.Method)
 			assert.Equal(t, "/hello", r.RequestURI)
 			assert.Equal(t, int64(0), r.ContentLength)
-			assert.Equal(t, "testhost", r.Host)
 
 			fmt.Fprint(rw, "world")
 		}))
@@ -29,8 +29,7 @@ func Test(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, "GET", "/hello", nil)
-		req.Host = "testhost"
+		req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/hello", nil)
 		require.NoError(t, err)
 		resp, body := doRequest(t, cli, req)
 
@@ -39,7 +38,7 @@ func Test(t *testing.T) {
 	})
 
 	t.Run("echo", func(t *testing.T) {
-		cli := newTestServer(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		cli, baseURL := newTestServer(t, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			bb, err := io.ReadAll(r.Body)
 			if err != nil {
 				http.Error(rw, err.Error(), http.StatusInternalServerError)
@@ -56,7 +55,7 @@ func Test(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, "POST", "/echo", strings.NewReader("testing!"))
+		req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/echo", strings.NewReader("testing!"))
 		require.NoError(t, err)
 		resp, body := doRequest(t, cli, req)
 
@@ -79,7 +78,7 @@ func doRequest(t *testing.T, cli *http.Client, req *http.Request) (resp *http.Re
 // server.
 //
 // The test server will be shut down after the test completes.
-func newTestServer(t *testing.T, h http.Handler) *http.Client {
+func newTestServer(t *testing.T, h http.Handler) (cli *http.Client, baseURL string) {
 	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,14 +91,7 @@ func newTestServer(t *testing.T, h http.Handler) *http.Client {
 	}()
 	t.Cleanup(grpcSrv.GracefulStop)
 
-	connCtx, connCancel := context.WithTimeout(context.Background(), time.Second)
-	defer connCancel()
-
-	cc, err := grpc.DialContext(connCtx, lis.Addr().String(), grpc.WithInsecure(), grpc.WithBlock())
+	p, err := clientpool.New(clientpool.DefaultOptions, grpc.WithInsecure())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, cc.Close())
-	})
-
-	return &http.Client{Transport: ClientTransport(cc)}
+	return &http.Client{Transport: ClientTransport(p)}, fmt.Sprintf("http://%s", lis.Addr().String())
 }
