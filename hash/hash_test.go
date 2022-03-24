@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/hash"
+	"github.com/rfratto/ckit/peer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +21,7 @@ func Example() {
 	// passing hash.Observer(hasher) to ckit.(*Node).Observe.
 	//
 	// For this example, we'll manually set the peers.
-	hasher.SetPeers([]ckit.Peer{
+	hasher.SetPeers([]peer.Peer{
 		// The State of a Peer determines whether it can be used for hashing.
 		//
 		// Viewer nodes are never used for hashing; they're meant to be view-only
@@ -34,12 +34,12 @@ func Example() {
 		// no longer handle write operations, but they are still valid for read
 		// operations.
 
-		{Name: "viewer-a", State: ckit.StateViewer},
-		{Name: "viewer-b", State: ckit.StateViewer},
-		{Name: "viewer-c", State: ckit.StateViewer},
-		{Name: "node-a", State: ckit.StateParticipant},
-		{Name: "node-b", State: ckit.StateParticipant},
-		{Name: "node-c", State: ckit.StateTerminating},
+		{Name: "viewer-a", State: peer.StateViewer},
+		{Name: "viewer-b", State: peer.StateViewer},
+		{Name: "viewer-c", State: peer.StateViewer},
+		{Name: "node-a", State: peer.StateParticipant},
+		{Name: "node-b", State: peer.StateParticipant},
+		{Name: "node-c", State: peer.StateTerminating},
 	})
 
 	// Once SetPeers is called, you can determine the owner for some key. We'll
@@ -63,46 +63,46 @@ func Example() {
 
 func Test_Hasher_Lookup(t *testing.T) {
 	var (
-		viewerPeer      = ckit.Peer{Name: "viewer-peer", State: ckit.StateViewer}
-		participantPeer = ckit.Peer{Name: "participant-peer", State: ckit.StateParticipant}
-		terminatingPeer = ckit.Peer{Name: "terminating-peer", State: ckit.StateTerminating}
+		viewerPeer      = peer.Peer{Name: "viewer-peer", State: peer.StateViewer}
+		participantPeer = peer.Peer{Name: "participant-peer", State: peer.StateParticipant}
+		terminatingPeer = peer.Peer{Name: "terminating-peer", State: peer.StateTerminating}
 	)
 
 	tt := []struct {
 		name   string
-		peers  []ckit.Peer
+		peers  []peer.Peer
 		hashTy hash.Op
 
-		expectPeer  ckit.Peer
+		expectPeer  peer.Peer
 		expectError string
 	}{
 		{
 			name:        "HashTypeRead fails if there are no Participant or Terminating nodes",
-			peers:       []ckit.Peer{viewerPeer},
+			peers:       []peer.Peer{viewerPeer},
 			hashTy:      hash.OpRead,
 			expectError: "not enough nodes: need at least 1, have 0",
 		},
 		{
 			name:       "HashTypeRead permits Participant nodes",
-			peers:      []ckit.Peer{viewerPeer, participantPeer},
+			peers:      []peer.Peer{viewerPeer, participantPeer},
 			hashTy:     hash.OpRead,
 			expectPeer: participantPeer,
 		},
 		{
 			name:       "HashTypeRead permits Terminating nodes",
-			peers:      []ckit.Peer{viewerPeer, terminatingPeer},
+			peers:      []peer.Peer{viewerPeer, terminatingPeer},
 			hashTy:     hash.OpRead,
 			expectPeer: terminatingPeer,
 		},
 		{
 			name:        "HashTypeReadWrite fails if there are no Participant nodes",
-			peers:       []ckit.Peer{viewerPeer, terminatingPeer},
+			peers:       []peer.Peer{viewerPeer, terminatingPeer},
 			hashTy:      hash.OpReadWrite,
 			expectError: "not enough nodes: need at least 1, have 0",
 		},
 		{
 			name:       "HashTypeReadWrite permits Participant nodes",
-			peers:      []ckit.Peer{viewerPeer, participantPeer, terminatingPeer},
+			peers:      []peer.Peer{viewerPeer, participantPeer, terminatingPeer},
 			hashTy:     hash.OpReadWrite,
 			expectPeer: participantPeer,
 		},
@@ -118,7 +118,7 @@ func Test_Hasher_Lookup(t *testing.T) {
 			case tc.expectError != "":
 				require.EqualError(t, err, tc.expectError)
 			default:
-				require.Equal(t, []ckit.Peer{tc.expectPeer}, res)
+				require.Equal(t, []peer.Peer{tc.expectPeer}, res)
 			}
 		})
 	}

@@ -1,4 +1,4 @@
-package ckit
+package peer
 
 import "fmt"
 
@@ -22,7 +22,8 @@ const (
 	StateTerminating
 )
 
-var allStates = []State{
+// AllStates holds a list of all valid states.
+var AllStates = [...]State{
 	StateViewer,
 	StateParticipant,
 	StateTerminating,
@@ -40,15 +41,4 @@ func (s State) String() string {
 	default:
 		return fmt.Sprintf("<unknown state %d>", s)
 	}
-}
-
-// ErrStateTransition is returned when a node requests an invalid state
-// transition.
-type ErrStateTransition struct {
-	From, To State
-}
-
-// Error implements error.
-func (e ErrStateTransition) Error() string {
-	return fmt.Sprintf("invalid transition from %s to %s", e.From, e.To)
 }

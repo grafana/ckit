@@ -10,6 +10,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit"
+	"github.com/rfratto/ckit/peer"
 	"google.golang.org/grpc"
 )
 
@@ -46,7 +47,7 @@ func Example() {
 	//
 	// Note that Observers are invoked in the background and so this function
 	// might not always execute within this example.
-	node.Observe(ckit.FuncObserver(func(peers []ckit.Peer) (reregister bool) {
+	node.Observe(ckit.FuncObserver(func(peers []peer.Peer) (reregister bool) {
 		names := make([]string, len(peers))
 		for i, p := range peers {
 			names[i] = p.Name
@@ -77,7 +78,7 @@ func Example() {
 	// Nodes initially join the cluster in the Viewer state. We can move to the
 	// Participant state to signal that we wish to participate in reading or
 	// writing data.
-	err = node.ChangeState(context.Background(), ckit.StateParticipant)
+	err = node.ChangeState(context.Background(), peer.StateParticipant)
 	if err != nil {
 		panic(err)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
 	"github.com/rfratto/ckit/internal/queue"
+	"github.com/rfratto/ckit/peer"
 	"google.golang.org/grpc"
 )
 
@@ -29,6 +30,17 @@ var (
 	// stopped.
 	ErrStopped = errors.New("node stopped")
 )
+
+// StateTransitionError is returned when a node requests an invalid state
+// transition.
+type StateTransitionError struct {
+	From, To peer.State
+}
+
+// Error implements error.
+func (e StateTransitionError) Error() string {
+	return fmt.Sprintf("invalid transition from %s to %s", e.From, e.To)
+}
 
 // Config configures a Node within the cluster.
 type Config struct {
@@ -87,7 +99,7 @@ type Node struct {
 
 	stateMut   sync.RWMutex
 	runCancel  context.CancelFunc
-	localState State
+	localState peer.State
 	stopped    bool
 
 	observersMut sync.Mutex
@@ -104,8 +116,8 @@ type Node struct {
 
 	peerMut    sync.RWMutex
 	peerStates map[string]messages.State // State lookup for a node name
-	peers      map[string]Peer           // Current list of peers & their states
-	peerCache  []Peer                    // Slice version of peers; keep in sync with peers
+	peers      map[string]peer.Peer      // Current list of peers & their states
+	peerCache  []peer.Peer               // Slice version of peers; keep in sync with peers
 }
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
@@ -149,7 +161,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 		notifyObserversQueue: queue.New(1),
 
 		peerStates: make(map[string]messages.State),
-		peers:      make(map[string]Peer),
+		peers:      make(map[string]peer.Peer),
 	}
 
 	nd := &nodeDelegate{Node: n}
@@ -195,7 +207,7 @@ func (n *Node) Start(peers []string) error {
 	}
 
 	// Force ourselves back into the pending state.
-	if err := n.changeState(StateViewer, nil); err != nil {
+	if err := n.changeState(peer.StateViewer, nil); err != nil {
 		return err
 	}
 
@@ -225,14 +237,14 @@ func (n *Node) Start(peers []string) error {
 }
 
 func (n *Node) run(ctx context.Context) {
-	var lastPeers []Peer
+	var lastPeers []peer.Peer
 
 	for {
 		v, err := n.notifyObserversQueue.Dequeue(ctx)
 		if err != nil {
 			break
 		}
-		peers := v.([]Peer)
+		peers := v.([]peer.Peer)
 
 		// Ignore events if the peer set hasn't changed.
 		if peersEqual(lastPeers, peers) {
@@ -274,7 +286,7 @@ func (n *Node) Stop() error {
 
 // CurrentState returns n's current State. Other nodes may not have the same
 // State value for n as the current state propagates throughout the cluster.
-func (n *Node) CurrentState() State {
+func (n *Node) CurrentState() peer.State {
 	n.stateMut.RLock()
 	defer n.stateMut.RUnlock()
 
@@ -293,13 +305,13 @@ func (n *Node) CurrentState() State {
 //   StateParticipant -> StateTerminating
 //
 // Nodes intended to only be viewers should never transition to another state.
-func (n *Node) ChangeState(ctx context.Context, to State) error {
+func (n *Node) ChangeState(ctx context.Context, to peer.State) error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
 
 	t := stateTransition{From: n.localState, To: to}
 	if _, valid := validStateTransitions[t]; !valid {
-		return ErrStateTransition(t)
+		return StateTransitionError(t)
 	}
 
 	level.Debug(n.log).Log("msg", "changing node state", "from", n.localState, "to", to)
@@ -307,14 +319,14 @@ func (n *Node) ChangeState(ctx context.Context, to State) error {
 	return n.waitChangeState(ctx, to)
 }
 
-type stateTransition struct{ From, To State }
+type stateTransition struct{ From, To peer.State }
 
 var validStateTransitions = map[stateTransition]struct{}{
-	{StateViewer, StateParticipant}:      {},
-	{StateParticipant, StateTerminating}: {},
+	{peer.StateViewer, peer.StateParticipant}:      {},
+	{peer.StateParticipant, peer.StateTerminating}: {},
 }
 
-func (n *Node) waitChangeState(ctx context.Context, to State) error {
+func (n *Node) waitChangeState(ctx context.Context, to peer.State) error {
 	waitBroadcast := make(chan struct{}, 1)
 	afterBroadcast := func() {
 		select {
@@ -345,7 +357,7 @@ func (n *Node) waitChangeState(ctx context.Context, to State) error {
 	}
 }
 
-func (n *Node) changeState(to State, onDone func()) error {
+func (n *Node) changeState(to peer.State, onDone func()) error {
 	n.localState = to
 	n.m.nodeInfo.MustSet("state", to.String())
 
@@ -383,7 +395,7 @@ func (n *Node) handleStateMessage(msg messages.State) {
 	n.peerStates[msg.NodeName] = msg
 
 	if p, ok := n.peers[msg.NodeName]; ok {
-		p.State = State(msg.NewState)
+		p.State = peer.State(msg.NewState)
 		n.peers[msg.NodeName] = p
 		n.handlePeersChanged()
 	}
@@ -392,7 +404,7 @@ func (n *Node) handleStateMessage(msg messages.State) {
 // Peers returns all Peers currently known by n. The Peers list will include
 // peers regardless of their current State. The returned slice should not be
 // modified.
-func (n *Node) Peers() []Peer {
+func (n *Node) Peers() []peer.Peer {
 	n.peerMut.RLock()
 	defer n.peerMut.RUnlock()
 	return n.peerCache
@@ -404,9 +416,9 @@ func (n *Node) Peers() []Peer {
 // peerMut should be held when this function is called.
 func (n *Node) handlePeersChanged() {
 	var (
-		newPeers = make([]Peer, 0, len(n.peers))
+		newPeers = make([]peer.Peer, 0, len(n.peers))
 
-		peerCountByState = make(map[State]int, len(allStates))
+		peerCountByState = make(map[peer.State]int, len(peer.AllStates))
 	)
 
 	for _, peer := range n.peers {
@@ -415,7 +427,7 @@ func (n *Node) handlePeersChanged() {
 	}
 
 	// Update the metric based on the peers we just processed.
-	for _, state := range allStates {
+	for _, state := range peer.AllStates {
 		count := peerCountByState[state]
 		n.m.nodePeers.WithLabelValues(state.String()).Set(float64(count))
 	}
@@ -431,11 +443,12 @@ func (n *Node) handlePeersChanged() {
 
 // Observe registers o to be informed when the cluster changes. o will be
 // notified when a new peer is discovered, an existing peer shuts down, or the
-// state of a peer changes.
+// state of a peer changes. Observers are invoked in the order they were
+// registered.
 //
-// o must call Peers to get the current set of peers, which may have changed
-// since o was first notified. It is the responsibility of o to filter out
-// Peers it is not interested in.
+// Observers are notified in the background about the most recent state of the
+// cluster, ignoring intermediate changed events that occurred while a
+// long-running observer is still processing an older change.
 func (n *Node) Observe(o Observer) {
 	n.observersMut.Lock()
 	defer n.observersMut.Unlock()
@@ -443,7 +456,7 @@ func (n *Node) Observe(o Observer) {
 	n.m.nodeObservers.Set(float64(len(n.observers)))
 }
 
-func (n *Node) notifyObservers(peers []Peer) {
+func (n *Node) notifyObservers(peers []peer.Peer) {
 	n.observersMut.Lock()
 	defer n.observersMut.Unlock()
 
@@ -540,7 +553,7 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 
 		ls.NodeStates = append(ls.NodeStates, messages.State{
 			NodeName: p,
-			NewState: int(StateViewer),
+			NewState: int(peer.StateViewer),
 			Time:     lamport.Time(0),
 		})
 	}
@@ -583,7 +596,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		nd.peerStates[msg.NodeName] = msg
 
 		if p, ok := nd.peers[msg.NodeName]; ok {
-			p.State = State(msg.NewState)
+			p.State = peer.State(msg.NewState)
 			nd.peers[msg.NodeName] = p
 		}
 	}
@@ -644,12 +657,12 @@ func (nd *nodeDelegate) NotifyJoin(node *memberlist.Node) {
 
 // nodeToPeer converts a memberlist Node to a Peer. Should only be called with
 // peerMut held.
-func (nd *nodeDelegate) nodeToPeer(node *memberlist.Node) Peer {
-	return Peer{
+func (nd *nodeDelegate) nodeToPeer(node *memberlist.Node) peer.Peer {
+	return peer.Peer{
 		Name:  node.Name,
 		Addr:  node.Address(),
 		Self:  node.Name == nd.cfg.Name,
-		State: State(nd.peerStates[node.Name].NewState),
+		State: peer.State(nd.peerStates[node.Name].NewState),
 	}
 }
 
@@ -669,7 +682,7 @@ func (nd *nodeDelegate) NotifyUpdate(node *memberlist.Node) {
 	nd.updatePeer(nd.nodeToPeer(node))
 }
 
-func (nd *nodeDelegate) updatePeer(p Peer) {
+func (nd *nodeDelegate) updatePeer(p peer.Peer) {
 	nd.peers[p.Name] = p
 	nd.handlePeersChanged()
 }

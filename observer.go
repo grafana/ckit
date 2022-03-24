@@ -1,6 +1,10 @@
 package ckit
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/rfratto/ckit/peer"
+)
 
 // An Observer watches a Node, waiting for its peers to change.
 type Observer interface {
@@ -12,14 +16,14 @@ type Observer interface {
 	//
 	// If NotifyPeersChanged returns false, the Observer will no longer receive
 	// any notifications. This can be used for single-use watches.
-	NotifyPeersChanged(peers []Peer) (reregister bool)
+	NotifyPeersChanged(peers []peer.Peer) (reregister bool)
 }
 
 // FuncObserver implements Observer.
-type FuncObserver func(peers []Peer) (reregister bool)
+type FuncObserver func(peers []peer.Peer) (reregister bool)
 
 // NotifyPeersChanged implements Observer.
-func (f FuncObserver) NotifyPeersChanged(peers []Peer) (reregister bool) { return f(peers) }
+func (f FuncObserver) NotifyPeersChanged(peers []peer.Peer) (reregister bool) { return f(peers) }
 
 // ParticipantObserver wraps an observer and filters out events where the list
 // of peers in the Participants state haven't changed. When the set of
@@ -30,15 +34,15 @@ func ParticipantObserver(next Observer) Observer {
 }
 
 type participantObserver struct {
-	lastParticipants []Peer // Participants ordered by name
+	lastParticipants []peer.Peer // Participants ordered by name
 	next             Observer
 }
 
-func (po *participantObserver) NotifyPeersChanged(peers []Peer) (reregister bool) {
+func (po *participantObserver) NotifyPeersChanged(peers []peer.Peer) (reregister bool) {
 	// Filter peers down to those in StateParticipant.
-	participants := make([]Peer, 0, len(peers))
+	participants := make([]peer.Peer, 0, len(peers))
 	for _, p := range peers {
-		if p.State == StateParticipant {
+		if p.State == peer.StateParticipant {
 			participants = append(participants, p)
 		}
 	}
@@ -52,7 +56,7 @@ func (po *participantObserver) NotifyPeersChanged(peers []Peer) (reregister bool
 	return po.next.NotifyPeersChanged(peers)
 }
 
-func peersEqual(a, b []Peer) bool {
+func peersEqual(a, b []peer.Peer) bool {
 	if len(a) != len(b) {
 		return false
 	}
