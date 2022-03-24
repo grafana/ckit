@@ -44,7 +44,11 @@ type Sharder interface {
 	// op is less than numOwners.
 	Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error)
 
-	// SetPeers updates the set of peers used for sharding.
+	// Peers gets the current set of non-viewer peers used for sharding.
+	Peers() []peer.Peer
+
+	// SetPeers updates the set of peers used for sharding. Peers will be ignored
+	// if they are a viewer.
 	SetPeers(ps []peer.Peer)
 }
 
@@ -54,6 +58,19 @@ type chasher struct {
 	peers    map[string]peer.Peer // Set of all peers shared across both hashes
 
 	read, readWrite chash.Hash
+}
+
+func (ch *chasher) Peers() []peer.Peer {
+	ch.peersMut.RLock()
+	defer ch.peersMut.RUnlock()
+
+	ps := make([]peer.Peer, 0, len(ch.peers))
+	for _, p := range ch.peers {
+		ps = append(ps, p)
+	}
+	sort.Slice(ps, func(i, j int) bool { return ps[i].Name < ps[j].Name })
+
+	return ps
 }
 
 func (ch *chasher) SetPeers(ps []peer.Peer) {
