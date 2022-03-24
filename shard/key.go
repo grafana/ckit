@@ -1,4 +1,4 @@
-package hash
+package shard
 
 import "github.com/cespare/xxhash/v2"
 

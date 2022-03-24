@@ -1,9 +1,8 @@
-// Package ckit is a cluster toolkit for creating distributed systems that use
-// consistent hashing for message distribution. There are two main concepts:
+// Package ckit is a cluster toolkit for creating distributed systems. Nodes
+// use gossip over gRPC to maintain a list of all Nodes registered in the
+// cluster.
 //
-// 1. Nodes use gossip to find other Nodes running in the cluster. Gossip is
-// performed over gRPC. Nodes in the cluster are respresented as Peers.
-//
-// 2. Nodes manage the state of a Hash, which are used to determine which Peer
-// owns some key.
+// Nodes can optionally synchronize their state with a Sharder, which is used
+// to perform consistent hashing and shard ownership of keys across the
+// cluster.
 package ckit

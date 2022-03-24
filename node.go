@@ -17,12 +17,12 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/clientpool"
-	"github.com/rfratto/ckit/hash"
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
+	"github.com/rfratto/ckit/shard"
 	"google.golang.org/grpc"
 )
 
@@ -55,9 +55,9 @@ type Config struct {
 	// Optional logger to use.
 	Log log.Logger
 
-	// Optional hasher to synchronize cluster changes to. Synchronization of the
-	// Hasher happens prior to Observers being notified of changes.
-	Hasher hash.Hasher
+	// Optional sharder to synchronize cluster changes to. Synchronization of the
+	// Sharder happens prior to Observers being notified of changes.
+	Sharder shard.Sharder
 
 	// Optional client pool to use for establishing gRPC connctions to peers. A
 	// client pool will be made if one is not provided here.
@@ -90,9 +90,6 @@ func (c *Config) validate() error {
 
 // A Node is a participant in a cluster. Nodes keep track of all of their peers
 // and emit events to Observers when the cluster state changes.
-//
-// See the hash package for utilities to watch the cluster for changes and
-// calculate which node in the cluster is responsible for a certain object.
 type Node struct {
 	log                  log.Logger
 	cfg                  Config
@@ -442,9 +439,9 @@ func (n *Node) handlePeersChanged() {
 		return newPeers[i].Name < newPeers[j].Name
 	})
 
-	// Notify the hasher first if it's set.
-	if n.cfg.Hasher != nil {
-		n.cfg.Hasher.SetPeers(newPeers)
+	// Notify the sharder first if it's set.
+	if n.cfg.Sharder != nil {
+		n.cfg.Sharder.SetPeers(newPeers)
 	}
 
 	n.peerCache = newPeers

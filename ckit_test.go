@@ -11,8 +11,8 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit"
-	"github.com/rfratto/ckit/hash"
 	"github.com/rfratto/ckit/peer"
+	"github.com/rfratto/ckit/shard"
 	"google.golang.org/grpc"
 )
 
@@ -25,8 +25,8 @@ func Example() {
 	grpcServer := grpc.NewServer()
 
 	// We want to be able to perform consistent hashing against the state of the
-	// cluster. We'll create a hasher for our node to update.
-	hasher := hash.Ring(128)
+	// cluster. We'll create a ring for our node to update.
+	ring := shard.Ring(128)
 
 	// Create a config to use for joining the cluster. The config must at least
 	// have a unique name for the node in the cluster, and the address that other
@@ -38,9 +38,9 @@ func Example() {
 		// AdvertiseAddr will be the address shared with other nodes.
 		AdvertiseAddr: lis.Addr().String(),
 
-		// Cluster changes will be immediately synchronized with a hasher (when
+		// Cluster changes will be immediately synchronized with a sharder (when
 		// provided).
-		Hasher: hasher,
+		Sharder: ring,
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
@@ -93,10 +93,10 @@ func Example() {
 		panic(err)
 	}
 
-	// Changing our state will have caused our hasher to be updated as well. We can
-	// now look up the owner for a key. We should be the owner since we're the
-	// only node.
-	owners, err := hasher.Lookup(hash.StringKey("some-key"), 1, hash.OpReadWrite)
+	// Changing our state will have caused our sharder to be updated as well. We
+	// can now look up the owner for a key. We should be the owner since we're
+	// the only node.
+	owners, err := ring.Lookup(shard.StringKey("some-key"), 1, shard.OpReadWrite)
 	if err != nil {
 		panic(err)
 	}

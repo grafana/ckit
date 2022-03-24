@@ -1,6 +1,6 @@
-// Package hash implements a set of consistent hashing algorithms to determine
+// Package shard implements a set of consistent hashing algorithms to determine
 // ownership of a key within a cluster.
-package hash
+package shard
 
 import (
 	"fmt"
@@ -35,8 +35,8 @@ func (ht Op) String() string {
 	}
 }
 
-// A Hasher can lookup the owner for a specific key.
-type Hasher interface {
+// A Sharder can lookup the owner for a specific key.
+type Sharder interface {
 	// Lookup returns numOwners Peers for the provided key. The provided op
 	// is used to determine which peers may be considered potential owners.
 	//
@@ -44,11 +44,11 @@ type Hasher interface {
 	// op is less than numOwners.
 	Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error)
 
-	// SetPeers updates the set of peers used for hashing.
+	// SetPeers updates the set of peers used for sharding.
 	SetPeers(ps []peer.Peer)
 }
 
-// chasher wraps around two chash.Hash and adds logic for HashType.
+// chasher wraps around two chash.Hash and adds logic for Op.
 type chasher struct {
 	peersMut sync.RWMutex
 	peers    map[string]peer.Peer // Set of all peers shared across both hashes
@@ -102,7 +102,7 @@ func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error) {
 	case OpReadWrite:
 		names, err = ch.readWrite.Get(uint64(key), numOwners)
 	default:
-		return nil, fmt.Errorf("unknown hash type %s", op)
+		return nil, fmt.Errorf("unknown op %s", op)
 	}
 	if err != nil {
 		return nil, err
@@ -119,29 +119,29 @@ func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error) {
 	return res, nil
 }
 
-// Multiprobe implements a multi-probe hasher: https://arxiv.org/abs/1505.00062
+// Multiprobe implements a multi-probe sharder: https://arxiv.org/abs/1505.00062
 //
 // Multiprobe is optimized for a median peak-to-average load ratio of 1.05. It
 // performs a lookup in O(K * log N) time, where K is 21.
-func Multiprobe() Hasher {
+func Multiprobe() Sharder {
 	return &chasher{
 		read:      chash.Multiprobe(),
 		readWrite: chash.Multiprobe(),
 	}
 }
 
-// Rendezvous returns a rendezvous hasher (HRW, Highest Random Weight).
+// Rendezvous returns a rendezvous sharder (HRW, Highest Random Weight).
 //
 // Rendezvous is optimized for excellent load distribution, but has a runtime
 // complexity of O(N).
-func Rendezvous() Hasher {
+func Rendezvous() Sharder {
 	return &chasher{
 		read:      chash.Rendezvous(),
 		readWrite: chash.Rendezvous(),
 	}
 }
 
-// Ring implements a ring hasher. numTokens determines how many tokens each
+// Ring implements a ring sharder. numTokens determines how many tokens each
 // node should have. Tokens are mapped to the unit circle, and then ownership
 // of a key is determined by finding the next token on the unit circle. If two
 // nodes have the same token, the node that lexicographically comes first will
@@ -150,7 +150,7 @@ func Rendezvous() Hasher {
 // Ring is extremely fast, running in O(log N) time, but increases in memory
 // usage as numTokens increases. Low values of numTokens will cause poor
 // distribution; 256 or 512 is a good starting point.
-func Ring(numTokens int) Hasher {
+func Ring(numTokens int) Sharder {
 	return &chasher{
 		read:      chash.Ring(numTokens),
 		readWrite: chash.Ring(numTokens),
