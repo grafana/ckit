@@ -23,6 +23,7 @@ type packetsClientConn struct {
 	cli     streamClient
 	onClose func()
 	closed  bool
+	metrics *metrics
 
 	localAddr, remoteAddr net.Addr
 
@@ -42,6 +43,11 @@ type readResult struct {
 }
 
 func (c *packetsClientConn) Read(b []byte) (n int, err error) {
+	defer func() {
+		c.metrics.streamRxTotal.Inc()
+		c.metrics.streamRxBytesTotal.Add(float64(n))
+	}()
+
 	// Lazily spawn a background goroutine to reaed from our stream client.
 	c.spawnReader.Do(func() {
 		go func() {
@@ -109,6 +115,14 @@ func (c *packetsClientConn) readOrBlock(b []byte) (n int, err error) {
 }
 
 func (c *packetsClientConn) Write(b []byte) (n int, err error) {
+	defer func() {
+		c.metrics.streamTxTotal.Inc()
+		c.metrics.streamTxBytesTotal.Add(float64(n))
+		if err != nil {
+			c.metrics.streamTxFailedTotal.Inc()
+		}
+	}()
+
 	c.writeMut.Lock()
 	defer c.writeMut.Unlock()
 

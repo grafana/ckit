@@ -143,7 +143,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 		return nil, fmt.Errorf("failed to parse advertise port: %w", err)
 	}
 
-	grpcTransport, err := memberlistgrpc.NewTransport(srv, memberlistgrpc.Options{
+	grpcTransport, transportMetrics, err := memberlistgrpc.NewTransport(srv, memberlistgrpc.Options{
 		Log:           cfg.Log,
 		Pool:          cfg.Pool,
 		PacketTimeout: 3 * time.Second,
@@ -184,7 +184,12 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	n.ml = ml
 	n.broadcasts.NumNodes = ml.NumMembers
 	n.broadcasts.RetransmitMult = mlc.RetransmitMult
-	n.m.Add(newMemberlistCollector(ml)) // Include memberlist metrics
+
+	// Include memberlist and transport metrics
+	n.m.Add(
+		newMemberlistCollector(ml),
+		transportMetrics,
+	)
 
 	return n, nil
 }

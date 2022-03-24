@@ -39,7 +39,7 @@ func newTestEnvironment(t *testing.T) *testEnvironment {
 	require.NoError(t, err)
 
 	grpcSrv := grpc.NewServer()
-	tx, err := NewTransport(grpcSrv, Options{
+	tx, _, err := NewTransport(grpcSrv, Options{
 		Pool:          pool,
 		PacketTimeout: 1 * time.Second,
 	})

@@ -14,6 +14,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/hashicorp/memberlist"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/clientpool"
 	"github.com/rfratto/ckit/internal/queue"
 	"google.golang.org/grpc"
@@ -41,9 +42,9 @@ type Options struct {
 
 // NewTransport returns a new memberlist.Transport. Transport must be closed to
 // prevent leaking resources.
-func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) {
+func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, prometheus.Collector, error) {
 	if opts.Pool == nil {
-		return nil, fmt.Errorf("client Pool must be provided")
+		return nil, nil, fmt.Errorf("client Pool must be provided")
 	}
 
 	l := opts.Log
@@ -54,8 +55,9 @@ func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	tx := &transport{
-		log:  l,
-		opts: opts,
+		log:     l,
+		opts:    opts,
+		metrics: newMetrics(),
 
 		// TODO(rfratto): is it a problem that these queues have a max size?
 		// Old packets will get dropped if the max size is reached, but
@@ -70,15 +72,32 @@ func NewTransport(srv *grpc.Server, opts Options) (memberlist.Transport, error) 
 		exited: make(chan struct{}),
 		cancel: cancel,
 	}
+
+	tx.metrics.Add(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "cluster_transport_rx_packet_queue_length",
+			Help: "Current number of unprocessed incoming packets",
+		},
+		func() float64 { return float64(tx.inPacketQueue.Size()) },
+	))
+	tx.metrics.Add(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "cluster_transport_tx_packet_queue_length",
+			Help: "Current number of unprocessed outgoing packets",
+		},
+		func() float64 { return float64(tx.outPacketQueue.Size()) },
+	))
+
 	go tx.run(ctx)
 
 	RegisterTransportServer(srv, &transportServer{t: tx})
-	return tx, nil
+	return tx, tx.metrics, nil
 }
 
 type transport struct {
-	log  log.Logger
-	opts Options
+	log     log.Logger
+	opts    Options
+	metrics *metrics
 
 	// memberlist is designed for UDP, which is nearly non-blocking for writes.
 	// We need to be able to emulate the same performance of passing messages, so
@@ -125,7 +144,12 @@ func (t *transport) run(ctx context.Context) {
 			if err != nil {
 				return
 			}
-			t.inPacketCh <- v.(*memberlist.Packet)
+
+			pkt := v.(*memberlist.Packet)
+			t.metrics.packetRxTotal.Inc()
+			t.metrics.packetRxBytesTotal.Add(float64(len(pkt.Buf)))
+
+			t.inPacketCh <- pkt
 		}
 	}()
 
@@ -138,8 +162,11 @@ func (t *transport) run(ctx context.Context) {
 			if err != nil {
 				return
 			}
-			op := v.(*outPacket)
-			t.writeToSync(op.Data, op.Addr)
+
+			pkt := v.(*outPacket)
+			t.metrics.packetTxTotal.Inc()
+			t.metrics.packetTxBytesTotal.Add(float64(len(pkt.Data)))
+			t.writeToSync(pkt.Data, pkt.Addr)
 		}
 	}()
 
@@ -190,6 +217,7 @@ func (t *transport) writeToSync(b []byte, addr string) {
 	cc, err := t.opts.Pool.Get(ctx, addr)
 	if err != nil {
 		level.Error(t.log).Log("msg", "failed to get pooled client", "err", err)
+		t.metrics.packetTxFailedTotal.Inc()
 		return
 	}
 
@@ -197,6 +225,7 @@ func (t *transport) writeToSync(b []byte, addr string) {
 	_, err = cli.SendPacket(ctx, &Message{Data: b})
 	if err != nil {
 		level.Debug(t.log).Log("msg", "failed to send packet", "err", err)
+		t.metrics.packetTxFailedTotal.Inc()
 	}
 }
 
@@ -235,8 +264,14 @@ func (t *transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 	var readMut sync.Mutex
 	readCnd := sync.NewCond(&readMut)
 
+	t.metrics.openStreams.Inc()
+
 	return &packetsClientConn{
 		cli: packetsClient,
+		onClose: func() {
+			t.metrics.openStreams.Dec()
+		},
+		metrics: t.metrics,
 
 		localAddr:  t.localAddr,
 		remoteAddr: remoteAddr,
@@ -295,9 +330,15 @@ func (s *transportServer) StreamPackets(stream Transport_StreamPacketsServer) er
 	var readMut sync.Mutex
 	readCnd := sync.NewCond(&readMut)
 
+	s.t.metrics.openStreams.Inc()
+
 	conn := &packetsClientConn{
-		cli:     stream,
-		onClose: func() { close(waitClosed) },
+		cli: stream,
+		onClose: func() {
+			s.t.metrics.openStreams.Dec()
+			close(waitClosed)
+		},
+		metrics: s.t.metrics,
 
 		localAddr:  s.t.localAddr,
 		remoteAddr: p.Addr,

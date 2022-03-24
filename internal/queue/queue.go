@@ -129,6 +129,13 @@ func (q *Queue) Enqueue(v interface{}) {
 	q.sema.Signal()
 }
 
+// Size of the elements in the queue.
+func (q *Queue) Size() int {
+	q.sema.L.Lock()
+	defer q.sema.L.Unlock()
+	return len(q.elements)
+}
+
 // Close the queue, preventing any more messages from being sent. Dequeue will
 // return io.EOF.
 func (q *Queue) Close() error {
