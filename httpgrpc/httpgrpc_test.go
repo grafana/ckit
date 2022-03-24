@@ -1,4 +1,4 @@
-package httpgrpc
+package httpgrpc_test
 
 import (
 	"context"
@@ -11,10 +11,56 @@ import (
 	"time"
 
 	"github.com/rfratto/ckit/clientpool"
+	"github.com/rfratto/ckit/httpgrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
+
+func Example() {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, "Hello, world!")
+	})
+
+	grpcSrv := grpc.NewServer()
+	httpgrpc.Serve(grpcSrv, handler)
+	go func() {
+		_ = grpcSrv.Serve(lis)
+	}()
+	defer grpcSrv.GracefulStop()
+
+	p, err := clientpool.New(clientpool.DefaultOptions, grpc.WithInsecure())
+	if err != nil {
+		panic(err)
+	}
+
+	cli := http.Client{Transport: httpgrpc.ClientTransport(p)}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+lis.Addr().String(), nil)
+	if err != nil {
+		panic(err)
+	}
+
+	resp, err := cli.Do(req)
+	if err != nil {
+		panic(err)
+	}
+
+	bb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(string(bb))
+
+	// Output:
+	// Hello, world!
+}
 
 func Test(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
@@ -85,7 +131,7 @@ func newTestServer(t *testing.T, h http.Handler) (cli *http.Client, baseURL stri
 	require.NoError(t, err)
 
 	grpcSrv := grpc.NewServer()
-	Serve(grpcSrv, h)
+	httpgrpc.Serve(grpcSrv, h)
 	go func() {
 		require.NoError(t, grpcSrv.Serve(lis))
 	}()
@@ -93,5 +139,5 @@ func newTestServer(t *testing.T, h http.Handler) (cli *http.Client, baseURL stri
 
 	p, err := clientpool.New(clientpool.DefaultOptions, grpc.WithInsecure())
 	require.NoError(t, err)
-	return &http.Client{Transport: ClientTransport(p)}, fmt.Sprintf("http://%s", lis.Addr().String())
+	return &http.Client{Transport: httpgrpc.ClientTransport(p)}, fmt.Sprintf("http://%s", lis.Addr().String())
 }
