@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/clientpool"
+	"github.com/rfratto/ckit/hash"
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
@@ -53,6 +54,10 @@ type Config struct {
 
 	// Optional logger to use.
 	Log log.Logger
+
+	// Optional hasher to synchronize cluster changes to. Synchronization of the
+	// Hasher happens prior to Observers being notified of changes.
+	Hasher hash.Hasher
 
 	// Optional client pool to use for establishing gRPC connctions to peers. A
 	// client pool will be made if one is not provided here.
@@ -436,6 +441,11 @@ func (n *Node) handlePeersChanged() {
 	sort.Slice(newPeers, func(i, j int) bool {
 		return newPeers[i].Name < newPeers[j].Name
 	})
+
+	// Notify the hasher first if it's set.
+	if n.cfg.Hasher != nil {
+		n.cfg.Hasher.SetPeers(newPeers)
+	}
 
 	n.peerCache = newPeers
 	n.notifyObserversQueue.Enqueue(newPeers)

@@ -3,6 +3,7 @@ package ckit_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit"
+	"github.com/rfratto/ckit/hash"
 	"github.com/rfratto/ckit/peer"
 	"google.golang.org/grpc"
 )
@@ -22,6 +24,10 @@ func Example() {
 	}
 	grpcServer := grpc.NewServer()
 
+	// We want to be able to perform consistent hashing against the state of the
+	// cluster. We'll create a hasher for our node to update.
+	hasher := hash.Ring(128)
+
 	// Create a config to use for joining the cluster. The config must at least
 	// have a unique name for the node in the cluster, and the address that other
 	// nodes can connect to using gRPC.
@@ -31,6 +37,10 @@ func Example() {
 
 		// AdvertiseAddr will be the address shared with other nodes.
 		AdvertiseAddr: lis.Addr().String(),
+
+		// Cluster changes will be immediately synchronized with a hasher (when
+		// provided).
+		Hasher: hasher,
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
@@ -82,4 +92,16 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Changing our state will have caused our hasher to be updated as well. We can
+	// now look up the owner for a key. We should be the owner since we're the
+	// only node.
+	owners, err := hasher.Lookup(hash.StringKey("some-key"), 1, hash.OpReadWrite)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Owner of some-key: %s\n", owners[0].Name)
+
+	// Output:
+	// Owner of some-key: first-node
 }
