@@ -3,11 +3,12 @@ package messages
 import (
 	"testing"
 
+	"github.com/rfratto/ckit/peer"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMessages(t *testing.T) {
-	md := State{NodeName: "test", NewState: 5}
+	md := State{NodeName: "test", NewState: peer.StateParticipant}
 
 	raw, err := Encode(&md)
 	require.NoError(t, err)
@@ -26,7 +27,7 @@ func TestMessages_Invalid(t *testing.T) {
 	require.Panics(t, func() { Encode(fakeMessage{ty: TypeInvalid}) })
 	require.Panics(t, func() { Encode(fakeMessage{ty: 254}) })
 
-	md := State{NodeName: "test", NewState: 5}
+	md := State{NodeName: "test", NewState: peer.StateParticipant}
 	raw, err := Encode(&md)
 	require.NoError(t, err)
 

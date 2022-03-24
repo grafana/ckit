@@ -363,7 +363,7 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 
 	stateMsg := messages.State{
 		NodeName: n.cfg.Name,
-		NewState: int(to),
+		NewState: to,
 		Time:     lamport.Tick(),
 	}
 
@@ -395,7 +395,7 @@ func (n *Node) handleStateMessage(msg messages.State) {
 	n.peerStates[msg.NodeName] = msg
 
 	if p, ok := n.peers[msg.NodeName]; ok {
-		p.State = peer.State(msg.NewState)
+		p.State = msg.NewState
 		n.peers[msg.NodeName] = p
 		n.handlePeersChanged()
 	}
@@ -553,7 +553,7 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 
 		ls.NodeStates = append(ls.NodeStates, messages.State{
 			NodeName: p,
-			NewState: int(peer.StateViewer),
+			NewState: peer.StateViewer,
 			Time:     lamport.Time(0),
 		})
 	}
@@ -596,7 +596,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		nd.peerStates[msg.NodeName] = msg
 
 		if p, ok := nd.peers[msg.NodeName]; ok {
-			p.State = peer.State(msg.NewState)
+			p.State = msg.NewState
 			nd.peers[msg.NodeName] = p
 		}
 	}
@@ -662,7 +662,7 @@ func (nd *nodeDelegate) nodeToPeer(node *memberlist.Node) peer.Peer {
 		Name:  node.Name,
 		Addr:  node.Address(),
 		Self:  node.Name == nd.cfg.Name,
-		State: peer.State(nd.peerStates[node.Name].NewState),
+		State: nd.peerStates[node.Name].NewState,
 	}
 }
 

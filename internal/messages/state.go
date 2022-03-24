@@ -1,13 +1,16 @@
 package messages
 
-import "github.com/rfratto/ckit/internal/lamport"
+import (
+	"github.com/rfratto/ckit/internal/lamport"
+	"github.com/rfratto/ckit/peer"
+)
 
 // State represents a State change broadcast from a node.
 type State struct {
 	// Name of the node this state change is for.
 	NodeName string
 	// New State of the node.
-	NewState int
+	NewState peer.State
 	// Time the state was generated.
 	Time lamport.Time
 }
