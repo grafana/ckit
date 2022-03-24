@@ -1,6 +1,8 @@
 package messages
 
 import (
+	"fmt"
+
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/peer"
 )
@@ -13,6 +15,11 @@ type State struct {
 	NewState peer.State
 	// Time the state was generated.
 	Time lamport.Time
+}
+
+// String returns the string representation of the State message.
+func (s State) String() string {
+	return fmt.Sprintf("%s @%d: %s", s.NodeName, s.Time, s.NewState)
 }
 
 var _ Message = (*State)(nil)

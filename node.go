@@ -99,6 +99,11 @@ type Node struct {
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
 
+	// The clock for the node. Nodes have their own clock for the sake of
+	// testing; using the global clock could cause clock synchronization issues
+	// to be missed if you use multiple in-process nodes.
+	clock lamport.Clock
+
 	stateMut   sync.RWMutex
 	runCancel  context.CancelFunc
 	localState peer.State
@@ -208,14 +213,15 @@ func (n *Node) Start(peers []string) error {
 		return ErrStopped
 	}
 
-	// Force ourselves back into the pending state.
-	if err := n.changeState(peer.StateViewer, nil); err != nil {
-		return err
-	}
-
 	_, err := n.ml.Join(peers)
 	if err != nil {
 		return fmt.Errorf("failed to join memberlist: %w", err)
+	}
+
+	// Force ourselves back into the pending state. This MUST be done after the
+	// join: join does a state sync and updates our lamport clock.
+	if err := n.changeState(peer.StateViewer, nil); err != nil {
+		return err
 	}
 
 	// Join won't return until we've done a push/pull; if there was a name
@@ -317,7 +323,6 @@ func (n *Node) ChangeState(ctx context.Context, to peer.State) error {
 	}
 
 	level.Debug(n.log).Log("msg", "changing node state", "from", n.localState, "to", to)
-
 	return n.waitChangeState(ctx, to)
 }
 
@@ -365,8 +370,8 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 
 	stateMsg := messages.State{
 		NodeName: n.cfg.Name,
-		NewState: to,
-		Time:     lamport.Tick(),
+		NewState: n.localState,
+		Time:     n.clock.Tick(),
 	}
 
 	// Treat the stateMsg as if it was received externally to track our own state
@@ -382,8 +387,10 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 	return nil
 }
 
+// handleStateMessage handles a state message from a peer. peerMut must be held
+// when calling.
 func (n *Node) handleStateMessage(msg messages.State) {
-	lamport.Observe(msg.Time)
+	n.clock.Observe(msg.Time)
 
 	n.peerMut.Lock()
 	defer n.peerMut.Unlock()
@@ -393,6 +400,8 @@ func (n *Node) handleStateMessage(msg messages.State) {
 		// Ignore a state message if we have a newer one.
 		return
 	}
+
+	level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
 
 	n.peerStates[msg.NodeName] = msg
 
@@ -543,7 +552,8 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 	nd.m.gossipEventsTotal.WithLabelValues(eventGetLocalState).Inc()
 
 	ls := localState{
-		NodeStates: make([]messages.State, 0, len(nd.peers)),
+		CurrentTime: nd.clock.Now(),
+		NodeStates:  make([]messages.State, 0, len(nd.peers)),
 	}
 
 	// Our local state will have one NodeState for each peer we're currently
@@ -579,6 +589,8 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		level.Error(nd.log).Log("msg", "failed to decode remote state", "join", join, "err", err)
 		return
 	}
+	nd.clock.Observe(rs.CurrentTime)
+	level.Debug(nd.log).Log("msg", "merging remote state", "remote_time", rs.CurrentTime)
 
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
@@ -587,6 +599,8 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 
 	// Build a map of remote states by name to optimize lookups.
 	remoteStates := make(map[string]messages.State, len(rs.NodeStates))
+
+	var peersChanged bool
 
 	// Merge in node states that the remote peer kept.
 	for _, msg := range rs.NodeStates {
@@ -605,6 +619,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		if p, ok := nd.peers[msg.NodeName]; ok {
 			p.State = msg.NewState
 			nd.peers[msg.NodeName] = p
+			peersChanged = true
 		}
 	}
 
@@ -623,10 +638,14 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		}
 	}
 
-	nd.handlePeersChanged()
+	if peersChanged {
+		nd.handlePeersChanged()
+	}
 }
 
 type localState struct {
+	// CurrentTime is the current lamport time.
+	CurrentTime lamport.Time
 	// NodeStates holds the set of states for all peers of a node. States may
 	// have a lamport time of 0 for nodes that have not broadcast a state yet.
 	NodeStates []messages.State

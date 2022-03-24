@@ -3,11 +3,14 @@ package ckit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit/internal/testlogger"
 	"github.com/rfratto/ckit/peer"
 	"github.com/stretchr/testify/require"
@@ -43,6 +46,15 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 		}
 	}()
 	t.Cleanup(grpcServer.GracefulStop)
+
+	node.Observe(FuncObserver(func(peers []peer.Peer) (reregister bool) {
+		names := make([]string, len(peers))
+		for i := range peers {
+			names[i] = fmt.Sprintf("%s (%s)", peers[i].Name, peers[i].State)
+		}
+		level.Debug(cfg.Log).Log("msg", "peers changed", "peers", strings.Join(names, ", "))
+		return true
+	}))
 
 	return node, cfg.AdvertiseAddr
 }
@@ -97,39 +109,95 @@ func TestNode_State(t *testing.T) {
 		require.NoError(t, b.ChangeState(ctx, peer.StateParticipant))
 		require.NoError(t, b.ChangeState(ctx, peer.StateTerminating))
 
-		// Wait for node-b to receive node-a's state change.
-		require.Eventually(t, func() bool {
-			bPeers := b.Peers()
-			for _, p := range bPeers {
-				if p.Name != "node-a" {
-					continue
-				}
-				return p.State == peer.StateParticipant
-			}
-
-			return false
-		}, 30*time.Second, time.Millisecond*250)
-
-		// Wait for node-a to receieve node-b's state change.
-		require.Eventually(t, func() bool {
-			aPeers := a.Peers()
-			for _, p := range aPeers {
-				if p.Name != "node-b" {
-					continue
-				}
-				return p.State == peer.StateTerminating
-			}
-
-			return false
-		}, 30*time.Second, time.Millisecond*250)
+		// Wait for each node to be aware of the other's state change.
+		waitPeerState(t, b, a.cfg.Name, peer.StateParticipant)
+		waitPeerState(t, a, b.cfg.Name, peer.StateTerminating)
 	})
+
+	t.Run("nodes can restart in viewer state", func(t *testing.T) {
+		// This test can fail if a node receieves an old message about its state
+		// before it shut down.
+
+		var (
+			l   = testlogger.New(t)
+			ctx = context.Background()
+
+			a, aAddr = newTestNode(t, l, "node-a")
+			b, _     = newTestNode(t, l, "node-b")
+		)
+
+		runTestNode(t, a, nil) // Run a for the duration of the test
+
+		// Start b and then transition it into Terminating.
+		require.NoError(t, b.Start([]string{aAddr}))
+		require.NoError(t, b.ChangeState(ctx, peer.StateParticipant))
+		require.NoError(t, b.ChangeState(ctx, peer.StateTerminating))
+
+		// Wait for a to know b is terminating and close the node.
+		waitPeerState(t, a, b.cfg.Name, peer.StateTerminating)
+		require.NoError(t, b.Stop())
+
+		// Wait for a to remove b from its peers.
+		waitClusterState(t, a, func(n *Node) bool {
+			return len(a.Peers()) == 1
+		})
+
+		// Recreate b. b should be in Viewer state.
+		b, _ = newTestNode(t, l, b.cfg.Name)
+		require.NoError(t, b.Start([]string{aAddr}))
+		defer b.Stop()
+
+		// Wait for a to know b is a viewer.
+		waitPeerState(t, a, b.cfg.Name, peer.StateViewer)
+	})
+}
+
+func waitPeerState(t *testing.T, node *Node, peerName string, expect peer.State) {
+	t.Helper()
+
+	waitClusterState(t, node, func(n *Node) bool {
+		for _, p := range n.Peers() {
+			if p.Name != peerName {
+				continue
+			}
+			if p.State == expect {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func waitClusterState(t *testing.T, node *Node, check func(*Node) bool) {
+	t.Helper()
+
+	done := make(chan struct{}, 1)
+	node.Observe(FuncObserver(func([]peer.Peer) (reregister bool) {
+		if check(node) {
+			done <- struct{}{}
+			return false
+		}
+		return true
+	}))
+
+	// Do an initial check, we might be already good.
+	if check(node) {
+		return
+	}
+
+	// Wait for up to 30 seconds for the event.
+	select {
+	case <-time.After(30 * time.Second):
+		require.FailNow(t, "cluster state never matched condition")
+	case <-done:
+		return
+	}
 }
 
 func TestNode_Observe(t *testing.T) {
 	t.Run("invoked when peer set changes", func(t *testing.T) {
 		var (
-			l = testlogger.New(t)
-			//ctx = context.Background()
+			l       = testlogger.New(t)
 			invoked atomic.Int64
 
 			a, aAddr = newTestNode(t, l, "node-a")
@@ -209,10 +277,9 @@ func TestNode_Observe(t *testing.T) {
 		// processing peer events never invokes our callback again.
 		runTestNode(t, b, []string{aAddr})
 
-		require.Eventually(t, func() bool {
-			return len(a.Peers()) == 2
-		}, 15*time.Second, 500*time.Millisecond)
-
+		waitClusterState(t, a, func(n *Node) bool {
+			return len(n.Peers()) == 2
+		})
 		time.Sleep(500 * time.Millisecond)
 	})
 }
@@ -231,9 +298,9 @@ func TestNode_Peers(t *testing.T) {
 		runTestNode(t, b, []string{aAddr})
 		runTestNode(t, c, []string{bAddr})
 
-		require.Eventually(t, func() bool {
+		waitClusterState(t, a, func(n *Node) bool {
 			return len(a.Peers()) == 3
-		}, 15*time.Second, 250*time.Millisecond)
+		})
 
 		expectPeers := []peer.Peer{
 			{Name: "node-a", Addr: aAddr, Self: true, State: peer.StateViewer},
@@ -260,16 +327,16 @@ func TestNode_Peers(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for node-a to be aware of all 3 nodes.
-		require.Eventually(t, func() bool {
+		waitClusterState(t, a, func(n *Node) bool {
 			return len(a.Peers()) == 3
-		}, 15*time.Second, 250*time.Millisecond)
+		})
 
 		// Then, stop the third node and wait for node-a to receive the change.
 		require.NoError(t, c.Stop())
 
-		require.Eventually(t, func() bool {
+		waitClusterState(t, a, func(n *Node) bool {
 			return len(a.Peers()) == 2
-		}, 15*time.Second, 250*time.Millisecond)
+		})
 
 		expectPeers := []peer.Peer{
 			{Name: "node-a", Addr: aAddr, Self: true, State: peer.StateViewer},

@@ -196,7 +196,7 @@ func (t *transport) writeToSync(b []byte, addr string) {
 	cli := NewTransportClient(cc)
 	_, err = cli.SendPacket(ctx, &Message{Data: b})
 	if err != nil {
-		level.Error(t.log).Log("msg", "failed to send packet", "err", err)
+		level.Debug(t.log).Log("msg", "failed to send packet", "err", err)
 	}
 }
 
