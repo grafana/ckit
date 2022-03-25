@@ -393,20 +393,12 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 
 	// Treat the stateMsg as if it was received externally to track our own state
 	// along with other nodes.
-	n.handleStateMessage(stateMsg)
-
-	bcast, err := messages.Broadcast(&stateMsg, onDone)
-	if err != nil {
-		return err
-	}
-
-	n.broadcasts.QueueBroadcast(bcast)
-	return nil
+	return n.handleStateMessage(stateMsg, onDone)
 }
 
 // handleStateMessage handles a state message from a peer. peerMut must be held
 // when calling.
-func (n *Node) handleStateMessage(msg messages.State) {
+func (n *Node) handleStateMessage(msg messages.State, onDone func()) error {
 	n.clock.Observe(msg.Time)
 
 	n.peerMut.Lock()
@@ -414,8 +406,8 @@ func (n *Node) handleStateMessage(msg messages.State) {
 
 	curr, exist := n.peerStates[msg.NodeName]
 	if exist && msg.Time <= curr.Time {
-		// Ignore a state message if we have a newer one.
-		return
+		// Ignore a state message if we have the same or a newer one.
+		return nil
 	}
 
 	level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
@@ -427,6 +419,14 @@ func (n *Node) handleStateMessage(msg messages.State) {
 		n.peers[msg.NodeName] = p
 		n.handlePeersChanged()
 	}
+
+	// We haven't seen this message before; gossip it to our peers.
+	bcast, err := messages.Broadcast(&msg, onDone)
+	if err != nil {
+		return err
+	}
+	n.broadcasts.QueueBroadcast(bcast)
+	return nil
 }
 
 // Peers returns all Peers currently known by n. The Peers list will include
@@ -550,7 +550,10 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 			return
 		}
 
-		nd.handleStateMessage(s)
+		// We can ignore errors here, which happen if we failed to rebroadcast the
+		// message. Messages will still eventually converge eventually through
+		// push/pulls.
+		_ = nd.handleStateMessage(s, nil)
 	default:
 		nd.m.gossipEventsTotal.WithLabelValues(eventUnkownMessage).Inc()
 
@@ -651,6 +654,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		// entry for this peer, we can treat it as stale and delete it.
 		_, peerExistsRemote := remoteStates[nodeName]
 		if !peerExistsRemote {
+			level.Debug(nd.log).Log("msg", "deleting stale reference to node", "node", nodeName)
 			delete(nd.peerStates, nodeName)
 		}
 	}
