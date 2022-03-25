@@ -22,7 +22,7 @@ type streamClient interface {
 type packetsClientConn struct {
 	cli     streamClient
 	onClose func()
-	closed  bool
+	closed  chan struct{}
 	metrics *metrics
 
 	localAddr, remoteAddr net.Addr
@@ -56,10 +56,14 @@ func (c *packetsClientConn) Read(b []byte) (n int, err error) {
 			for {
 				msg, err := c.cli.Recv()
 				c.readCnd.Broadcast() // Wake up sleeping goroutines
-				c.readMessages <- readResult{
-					Message: msg,
-					Error:   err,
+
+				res := readResult{Message: msg, Error: err}
+				select {
+				case c.readMessages <- res:
+				case <-c.closed:
+					return
 				}
+
 				if err != nil {
 					return
 				}
@@ -137,17 +141,22 @@ func (c *packetsClientConn) Close() error {
 	c.writeMut.Lock()
 	defer c.writeMut.Unlock()
 
-	if clientStream, ok := c.cli.(Transport_StreamPacketsClient); ok {
-		return clientStream.CloseSend()
-	}
+	select {
+	case <-c.closed:
+		// no-op: already closed
+		return nil
+	default:
+		close(c.closed)
 
-	if !c.closed {
-		c.closed = true
 		if c.onClose != nil {
 			c.onClose()
 		}
+
+		if clientStream, ok := c.cli.(Transport_StreamPacketsClient); ok {
+			return clientStream.CloseSend()
+		}
+		return nil
 	}
-	return nil
 }
 
 func (c *packetsClientConn) LocalAddr() net.Addr {

@@ -271,6 +271,7 @@ func (t *transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 		onClose: func() {
 			t.metrics.openStreams.Dec()
 		},
+		closed:  make(chan struct{}),
 		metrics: t.metrics,
 
 		localAddr:  t.localAddr,
@@ -338,6 +339,7 @@ func (s *transportServer) StreamPackets(stream Transport_StreamPacketsServer) er
 			s.t.metrics.openStreams.Dec()
 			close(waitClosed)
 		},
+		closed:  make(chan struct{}),
 		metrics: s.t.metrics,
 
 		localAddr:  s.t.localAddr,
