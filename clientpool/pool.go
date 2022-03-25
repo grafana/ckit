@@ -134,12 +134,10 @@ func (p *Pool) run(ctx context.Context) {
 	defer close(p.exited)
 
 	var cleanupTick <-chan time.Time
-	if p.opts.StaleCleanupFrequency == 0 {
-		// Make a channel that never fires if we're not going to do cleanups.
-		cleanupTick = make(<-chan time.Time)
-	} else {
+	if p.opts.StaleCleanupFrequency != 0 {
 		t := time.NewTicker(p.opts.StaleCleanupFrequency)
 		defer t.Stop()
+		cleanupTick = t.C
 	}
 
 	for {
