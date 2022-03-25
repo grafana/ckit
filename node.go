@@ -138,9 +138,15 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read advertise address: %w", err)
 	}
+
+	advertiseIP, err := net.ResolveIPAddr("tcp", advertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup advertise address %s: %w", advertiseAddr, err)
+	}
+
 	advertisePort, err := net.LookupPort("tcp", advertisePortString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse advertise port: %w", err)
+		return nil, fmt.Errorf("failed to parse advertise port %s: %w", advertisePortString, err)
 	}
 
 	grpcTransport, transportMetrics, err := memberlistgrpc.NewTransport(srv, memberlistgrpc.Options{
@@ -155,7 +161,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	mlc := memberlist.DefaultLANConfig()
 	mlc.Name = cfg.Name
 	mlc.Transport = grpcTransport
-	mlc.AdvertiseAddr = advertiseAddr
+	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
 	mlc.LogOutput = io.Discard
 
@@ -185,10 +191,16 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	n.broadcasts.NumNodes = ml.NumMembers
 	n.broadcasts.RetransmitMult = mlc.RetransmitMult
 
-	// Include memberlist and transport metrics
+	// Include some extra metrics.
 	n.m.Add(
 		newMemberlistCollector(ml),
 		transportMetrics,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "cluster_node_lamport_time",
+			Help: "The current lamport time of the node.",
+		}, func() float64 {
+			return float64(n.clock.Now())
+		}),
 	)
 
 	return n, nil
