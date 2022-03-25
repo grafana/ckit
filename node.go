@@ -23,6 +23,7 @@ import (
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
+	"go.uber.org/atomic"
 	"google.golang.org/grpc"
 )
 
@@ -125,6 +126,11 @@ type Node struct {
 	peerStates map[string]messages.State // State lookup for a node name
 	peers      map[string]peer.Peer      // Current list of peers & their states
 	peerCache  []peer.Peer               // Slice version of peers; keep in sync with peers
+
+	// Rough number of current peers used to gossip messages. Using an atomic
+	// variable avoids deadlocks with queueing broadcasts given a memberlist
+	// event if the broadcast queue used memberlist.Memberlist.NumMembers.
+	estPeerCount atomic.Int32
 }
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
@@ -188,7 +194,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	}
 
 	n.ml = ml
-	n.broadcasts.NumNodes = ml.NumMembers
+	n.broadcasts.NumNodes = func() int { return int(n.estPeerCount.Load()) }
 	n.broadcasts.RetransmitMult = mlc.RetransmitMult
 
 	// Include some extra metrics.
@@ -472,6 +478,7 @@ func (n *Node) handlePeersChanged() {
 
 	n.peerCache = newPeers
 	n.notifyObserversQueue.Enqueue(newPeers)
+	n.estPeerCount.Store(int32(len(n.peerCache)))
 }
 
 // Observe registers o to be informed when the cluster changes. o will be
