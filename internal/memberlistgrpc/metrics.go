@@ -67,7 +67,7 @@ func newMetrics() *metrics {
 		Help: "Total number of gRPC gossip transport stream bytes written",
 	})
 	m.streamTxFailedTotal = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "custer_transport_stream_tx_packets_failed_total",
+		Name: "cluster_transport_stream_tx_packets_failed_total",
 		Help: "Total number of failed gRPC gossip transport stream packets",
 	})
 
