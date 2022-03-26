@@ -23,7 +23,6 @@ import (
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
-	"go.uber.org/atomic"
 	"google.golang.org/grpc"
 )
 
@@ -95,7 +94,7 @@ type Node struct {
 	log                  log.Logger
 	cfg                  Config
 	ml                   *memberlist.Memberlist
-	broadcasts           memberlist.TransmitLimitedQueue
+	broadcasts           memberlist.TransmitLimitedQueue // Make sure peerMut isn't held when updating
 	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
@@ -126,11 +125,6 @@ type Node struct {
 	peerStates map[string]messages.State // State lookup for a node name
 	peers      map[string]peer.Peer      // Current list of peers & their states
 	peerCache  []peer.Peer               // Slice version of peers; keep in sync with peers
-
-	// Rough number of current peers used to gossip messages. Using an atomic
-	// variable avoids deadlocks with queueing broadcasts given a memberlist
-	// event if the broadcast queue used memberlist.Memberlist.NumMembers.
-	estPeerCount atomic.Int32
 }
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
@@ -194,7 +188,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	}
 
 	n.ml = ml
-	n.broadcasts.NumNodes = func() int { return int(n.estPeerCount.Load()) }
+	n.broadcasts.NumNodes = func() int { return len(n.Peers()) }
 	n.broadcasts.RetransmitMult = mlc.RetransmitMult
 
 	// Include some extra metrics.
@@ -399,12 +393,19 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 
 	// Treat the stateMsg as if it was received externally to track our own state
 	// along with other nodes.
-	return n.handleStateMessage(stateMsg, onDone)
+	n.handleStateMessage(stateMsg)
+
+	bcast, err := messages.Broadcast(&stateMsg, onDone)
+	if err != nil {
+		return err
+	}
+	n.broadcasts.QueueBroadcast(bcast)
+	return nil
 }
 
-// handleStateMessage handles a state message from a peer. peerMut must be held
-// when calling.
-func (n *Node) handleStateMessage(msg messages.State, onDone func()) error {
+// handleStateMessage handles a state message from a peer. Returns true if the
+// message hasn't been seen before.
+func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 	n.clock.Observe(msg.Time)
 
 	n.peerMut.Lock()
@@ -413,7 +414,7 @@ func (n *Node) handleStateMessage(msg messages.State, onDone func()) error {
 	curr, exist := n.peerStates[msg.NodeName]
 	if exist && msg.Time <= curr.Time {
 		// Ignore a state message if we have the same or a newer one.
-		return nil
+		return false
 	}
 
 	level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
@@ -426,13 +427,7 @@ func (n *Node) handleStateMessage(msg messages.State, onDone func()) error {
 		n.handlePeersChanged()
 	}
 
-	// We haven't seen this message before; gossip it to our peers.
-	bcast, err := messages.Broadcast(&msg, onDone)
-	if err != nil {
-		return err
-	}
-	n.broadcasts.QueueBroadcast(bcast)
-	return nil
+	return true
 }
 
 // Peers returns all Peers currently known by n. The Peers list will include
@@ -478,7 +473,6 @@ func (n *Node) handlePeersChanged() {
 
 	n.peerCache = newPeers
 	n.notifyObserversQueue.Enqueue(newPeers)
-	n.estPeerCount.Store(int32(len(n.peerCache)))
 }
 
 // Observe registers o to be informed when the cluster changes. o will be
@@ -557,10 +551,17 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 			return
 		}
 
-		// We can ignore errors here, which happen if we failed to rebroadcast the
-		// message. Messages will still eventually converge eventually through
-		// push/pulls.
-		_ = nd.handleStateMessage(s, nil)
+		if nd.handleStateMessage(s) {
+			// We should continue gossiping the message to other peers if we haven't
+			// seen it before.
+			//
+			// We can ignore errors from the broadcast here. It shouldn't fail to
+			// encode since we just decoded it successfully, but even if it did fail,
+			// messages would still converge eventually using push/pulls.
+			bcast, _ := messages.Broadcast(&s, nil)
+			nd.broadcasts.QueueBroadcast(bcast)
+		}
+
 	default:
 		nd.m.gossipEventsTotal.WithLabelValues(eventUnkownMessage).Inc()
 
