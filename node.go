@@ -416,7 +416,6 @@ func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 		// Ignore a state message if we have the same or a newer one.
 		return false
 	}
-
 	level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
 
 	n.peerStates[msg.NodeName] = msg
@@ -620,15 +619,30 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 	nd.clock.Observe(rs.CurrentTime)
 	level.Debug(nd.log).Log("msg", "merging remote state", "remote_time", rs.CurrentTime)
 
+	// We'll be doing a full sync of state messages that another peer knows
+	// about. After the end of the full sync, we'll want to gossip new messages
+	// we've discovered to our peers.
+	var newMessages = make([]messages.State, 0, len(rs.NodeStates))
+	defer func() {
+		// This must be done after we unlock nd.peerMut, since QueueBroadcast will
+		// call nd.Peers.
+		for _, msg := range newMessages {
+			bcast, _ := messages.Broadcast(&msg, nil)
+			nd.broadcasts.QueueBroadcast(bcast)
+		}
+	}()
+
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
 
 	nd.m.gossipEventsTotal.WithLabelValues(eventMergeRemoteState).Inc()
 
-	// Build a map of remote states by name to optimize lookups.
-	remoteStates := make(map[string]messages.State, len(rs.NodeStates))
+	var (
+		peersChanged bool
 
-	var peersChanged bool
+		// Map of remote states by name to optimize lookups.
+		remoteStates = make(map[string]messages.State, len(rs.NodeStates))
+	)
 
 	// Merge in node states that the remote peer kept.
 	for _, msg := range rs.NodeStates {
@@ -641,6 +655,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 			// Ignore a state message if we have a newer one.
 			continue
 		}
+		level.Debug(nd.log).Log("msg", "handling state message", "msg", msg)
 
 		nd.peerStates[msg.NodeName] = msg
 
@@ -649,6 +664,8 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 			nd.peers[msg.NodeName] = p
 			peersChanged = true
 		}
+
+		newMessages = append(newMessages, msg)
 	}
 
 	// Clean up stale entries in peerStates.
@@ -670,6 +687,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 	if peersChanged {
 		nd.handlePeersChanged()
 	}
+
 }
 
 type localState struct {
