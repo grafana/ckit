@@ -164,7 +164,6 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
 	mlc.LogOutput = io.Discard
-	mlc.UDPBufferSize = math.MaxInt
 
 	n := &Node{
 		log: cfg.Log,
