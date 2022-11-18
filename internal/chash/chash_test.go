@@ -175,3 +175,32 @@ func runBenchmarkHashes(b *testing.B, numNodes int) {
 		})
 	}
 }
+
+// BenchmarkHashes tests the resources consumed of each hashing algorithm.
+func BenchmarkHashResource(b *testing.B) {
+	counts := []int{1, 10, 50, 100, 500, 1000}
+	for _, count := range counts {
+		b.Run(fmt.Sprintf("%d nodes", count), func(b *testing.B) {
+			runBenchmarkHashConsumption(b, count)
+		})
+	}
+}
+
+func runBenchmarkHashConsumption(b *testing.B, numNodes int) {
+	b.Helper()
+
+	var nodes = make([]string, numNodes)
+	for n := range nodes {
+		nodes[n] = fmt.Sprintf("node_%d", n+1)
+	}
+
+	for _, hasher := range allHashes {
+		b.Run(hasher.Name, func(b *testing.B) {
+			for n := 0; n < b.N; n++ {
+				h := hasher.H()
+				h.SetNodes(nodes)
+
+			}
+		})
+	}
+}
