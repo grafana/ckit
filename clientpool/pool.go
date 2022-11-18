@@ -83,7 +83,6 @@ func (c *client) updateLastUsed() {
 // New creats a new Pool. An error will be returned if the options are invalid.
 // The set of defaultDialOpts will be used when opening new connections.
 //
-//
 // Call Close to close the pool.
 func New(opts Options, defaultDialOpts ...grpc.DialOption) (*Pool, error) {
 	// Validations

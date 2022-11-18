@@ -326,8 +326,8 @@ func (n *Node) CurrentState() peer.State {
 // The "to" state must be valid to move to from the current state. Acceptable
 // transitions are:
 //
-//   StateViewer -> StateParticipant
-//   StateParticipant -> StateTerminating
+//	StateViewer -> StateParticipant
+//	StateParticipant -> StateTerminating
 //
 // Nodes intended to only be viewers should never transition to another state.
 func (n *Node) ChangeState(ctx context.Context, to peer.State) error {
@@ -687,7 +687,6 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 	if peersChanged {
 		nd.handlePeersChanged()
 	}
-
 }
 
 type localState struct {

@@ -199,7 +199,6 @@ func runBenchmarkHashConsumption(b *testing.B, numNodes int) {
 			for n := 0; n < b.N; n++ {
 				h := hasher.H()
 				h.SetNodes(nodes)
-
 			}
 		})
 	}
