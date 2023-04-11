@@ -489,7 +489,9 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 
 	resp, err := t.opts.Client.Do(req)
 	if err != nil {
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 
@@ -503,7 +505,9 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 
 		onClose: func() {
 			t.metrics.openStreams.Dec()
-			cancel()
+			if cancel != nil {
+				cancel()
+			}
 		},
 		closed:  make(chan struct{}),
 		metrics: t.metrics,
