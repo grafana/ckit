@@ -2,9 +2,12 @@ package ckit
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +16,11 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit/internal/testlogger"
 	"github.com/rfratto/ckit/peer"
+	"github.com/rfratto/ckit/shard"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 )
 
@@ -344,4 +350,98 @@ func TestNode_Peers(t *testing.T) {
 		}
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})
+}
+
+func TestHTTPNodes(t *testing.T) {
+	// Define N nodes, each with its own HTTP server and ckit config
+	numNodes := 3
+
+	var servers []*http.Server
+	var configs []Config
+	var nodes []*Node
+	var listeners []net.Listener
+
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	for i := 0; i < numNodes; i++ {
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic(err)
+		}
+		listeners = append(listeners, lis)
+
+		configs = append(configs, Config{
+			AdvertiseAddr: lis.Addr().String(),
+			Sharder:       shard.Rendezvous(),
+			Log:           log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
+		})
+		configs[i].Name = fmt.Sprintf("node-%d", i)
+
+		n, err := NewHTTPNode(cli, configs[i])
+		if err != nil {
+			panic(err)
+		}
+
+		nodes = append(nodes, n)
+		nodes[i].Observe(FuncObserver(func(peers []peer.Peer) (reregister bool) { return true }))
+	}
+
+	for i := 0; i < numNodes; i++ {
+		mux := http.NewServeMux()
+		baseRoute, handler := nodes[i].Handler()
+		mux.Handle(baseRoute, handler)
+		servers = append(servers, &http.Server{
+			Addr:    listeners[i].Addr().String(),
+			Handler: h2c.NewHandler(mux, &http2.Server{}),
+			TLSConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		})
+	}
+
+	// Start all HTTP servers
+	for i := 0; i < numNodes; i++ {
+		go func(i int) {
+			defer servers[i].Close()
+			defer listeners[i].Close()
+			servers[i].Serve(listeners[i])
+		}(i)
+	}
+	time.Sleep(1 * time.Second)
+
+	// Start first node to initialize the cluster; change its state to Participant
+	err := nodes[0].Start(nil)
+	if err != nil {
+		panic(err)
+	}
+	defer nodes[0].Stop()
+
+	err = nodes[0].ChangeState(context.Background(), peer.StateParticipant)
+	if err != nil {
+		panic(err)
+	}
+
+	// Start up the rest of the nodes in sequence
+	for i := 1; i < numNodes; i++ {
+		err := nodes[i].Start([]string{listeners[0].Addr().String()})
+		require.NoError(t, err)
+		err = nodes[i].ChangeState(context.Background(), peer.StateParticipant)
+		require.NoError(t, err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Inspect the cluster state.
+	for i := 0; i < numNodes; i++ {
+		require.Len(t, nodes[i].Peers(), numNodes)
+	}
 }

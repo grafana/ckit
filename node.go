@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/clientpool"
+	"github.com/rfratto/ckit/internal/gossiphttp"
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
@@ -98,6 +100,8 @@ type Node struct {
 	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
+	baseRoute            string
+	handler              http.Handler
 
 	// The clock for the node. Nodes have their own clock for the sake of
 	// testing; using the global clock could cause clock synchronization issues
@@ -206,9 +210,104 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	return n, nil
 }
 
+// NewHTTPNode creates an unstarted Node to participulate in a cluster. An error
+// will be returned if the provided config is invalid.
+func NewHTTPNode(cli *http.Client, cfg Config) (*Node, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	advertiseAddr, advertisePortString, err := net.SplitHostPort(cfg.AdvertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read advertise address: %w", err)
+	}
+
+	advertiseIP, err := net.ResolveIPAddr("ip4", advertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup advertise address %q: %w", advertiseAddr, err)
+	}
+
+	advertisePort, err := net.LookupPort("tcp", advertisePortString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse advertise port %q: %w", advertisePortString, err)
+	}
+
+	httpTransport, transportMetrics, err := gossiphttp.NewTransport(gossiphttp.Options{
+		Log:           cfg.Log,
+		Client:        cli,
+		PacketTimeout: 1 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transport: %w", err)
+	}
+
+	baseRoute, handler := httpTransport.Handler()
+
+	mlc := memberlist.DefaultLANConfig()
+	mlc.Name = cfg.Name
+	mlc.Transport = httpTransport
+	mlc.AdvertiseAddr = advertiseIP.String()
+	mlc.AdvertisePort = advertisePort
+	mlc.LogOutput = io.Discard
+
+	if cfg.Log != nil {
+		mlc.LogOutput = log.NewStdlibAdapter(level.Debug(log.With(cfg.Log, "component", "memberlist")))
+	}
+
+	n := &Node{
+		log: cfg.Log,
+		cfg: cfg,
+		m:   newMetrics(),
+
+		conflictQueue:        queue.New(1),
+		notifyObserversQueue: queue.New(1),
+
+		peerStates: make(map[string]messages.State),
+		peers:      make(map[string]peer.Peer),
+
+		baseRoute: baseRoute,
+		handler:   handler,
+	}
+
+	nd := &nodeDelegate{Node: n}
+	mlc.Events = nd
+	mlc.Delegate = nd
+	mlc.Conflict = nd
+
+	ml, err := memberlist.Create(mlc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memberlist: %w", err)
+	}
+
+	n.ml = ml
+	n.broadcasts.NumNodes = func() int { return len(n.Peers()) }
+	n.broadcasts.RetransmitMult = mlc.RetransmitMult
+
+	// Include some extra metrics.
+	n.m.Add(
+		newMemberlistCollector(ml),
+		transportMetrics,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "cluster_node_lamport_time",
+			Help: "The current lamport time of the node.",
+		}, func() float64 {
+			return float64(n.clock.Now())
+		}),
+	)
+
+	return n, nil
+}
+
 // Metrics returns a prometheus.Collector that can be used to collect metrics
 // about the Node.
 func (n *Node) Metrics() prometheus.Collector { return n.m }
+
+// Handler returns the base route and http.Handler used by the Node for
+// communicating over HTTP/2.
+//
+// The base route and handler must be configured properly by registering them
+// with an HTTP server before starting the Node.
+func (n *Node) Handler() (string, http.Handler) { return n.baseRoute, n.handler }
 
 // Start runs the Node for clustering with a list of peers to connect to. peers
 // can be an empty list if there is are no peers to connect to; other peers can
