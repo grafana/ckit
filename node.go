@@ -504,6 +504,8 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 
 // handleStateMessage handles a state message from a peer. Returns true if the
 // message hasn't been seen before.
+//
+// handleStateMessage must be called with n.stateMut held for reading.
 func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 	n.clock.Observe(msg.Time)
 
@@ -514,8 +516,20 @@ func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 	if exist && msg.Time <= curr.Time {
 		// Ignore a state message if we have the same or a newer one.
 		return false
+	} else if exist && msg.NodeName == n.cfg.Name {
+		level.Debug(n.log).Log("msg", "got stale message about self", "msg", msg)
+
+		// A peer has a newer message about ourselves, likely from a previous
+		// instance of the process. We'll ignore the message and replace it with a
+		// newer message reflecting our current state.
+		msg = messages.State{
+			NodeName: n.cfg.Name,
+			NewState: n.localState,
+			Time:     n.clock.Tick(),
+		}
+	} else {
+		level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
 	}
-	level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
 
 	n.peerStates[msg.NodeName] = msg
 
@@ -649,6 +663,10 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 			return
 		}
 
+		// nd.handleStateMessage must be called with stateMut held.
+		nd.stateMut.RLock()
+		defer nd.stateMut.RUnlock()
+
 		if nd.handleStateMessage(s) {
 			// We should continue gossiping the message to other peers if we haven't
 			// seen it before.
@@ -753,8 +771,20 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		if exist && msg.Time <= curr.Time {
 			// Ignore a state message if we have a newer one.
 			continue
+		} else if msg.NodeName == nd.cfg.Name {
+			level.Debug(nd.log).Log("msg", "got stale message about self", "msg", msg)
+
+			// Our remote peer has a newer message about ourselves, likely from a
+			// previous instance of the process. We'll ignore the message and replace
+			// it with a newer message reflecting our current state.
+			msg = messages.State{
+				NodeName: nd.cfg.Name,
+				NewState: nd.CurrentState(),
+				Time:     nd.clock.Tick(),
+			}
+		} else {
+			level.Debug(nd.log).Log("msg", "handling state message", "msg", msg)
 		}
-		level.Debug(nd.log).Log("msg", "handling state message", "msg", msg)
 
 		nd.peerStates[msg.NodeName] = msg
 
