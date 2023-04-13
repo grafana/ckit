@@ -17,15 +17,12 @@ import (
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/clientpool"
 	"github.com/rfratto/ckit/internal/gossiphttp"
 	"github.com/rfratto/ckit/internal/lamport"
-	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
-	"google.golang.org/grpc"
 )
 
 var (
@@ -60,10 +57,6 @@ type Config struct {
 	// Optional sharder to synchronize cluster changes to. Synchronization of the
 	// Sharder happens prior to Observers being notified of changes.
 	Sharder shard.Sharder
-
-	// Optional client pool to use for establishing gRPC connctions to peers. A
-	// client pool will be made if one is not provided here.
-	Pool *clientpool.Pool
 }
 
 func (c *Config) validate() error {
@@ -77,14 +70,6 @@ func (c *Config) validate() error {
 
 	if c.Log == nil {
 		c.Log = log.NewNopLogger()
-	}
-
-	if c.Pool == nil {
-		var err error
-		c.Pool, err = clientpool.New(clientpool.DefaultOptions, grpc.WithInsecure())
-		if err != nil {
-			return fmt.Errorf("failed to build default client pool: %w", err)
-		}
 	}
 
 	return nil
@@ -133,86 +118,17 @@ type Node struct {
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
 // will be returned if the provided config is invalid.
-func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
-	if err := cfg.validate(); err != nil {
-		return nil, err
-	}
-
-	advertiseAddr, advertisePortString, err := net.SplitHostPort(cfg.AdvertiseAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read advertise address: %w", err)
-	}
-
-	advertiseIP, err := net.ResolveIPAddr("ip4", advertiseAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup advertise address %s: %w", advertiseAddr, err)
-	}
-
-	advertisePort, err := net.LookupPort("tcp", advertisePortString)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse advertise port %s: %w", advertisePortString, err)
-	}
-
-	grpcTransport, transportMetrics, err := memberlistgrpc.NewTransport(srv, memberlistgrpc.Options{
-		Log:           cfg.Log,
-		Pool:          cfg.Pool,
-		PacketTimeout: 3 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to build transport: %w", err)
-	}
-
-	mlc := memberlist.DefaultLANConfig()
-	mlc.Name = cfg.Name
-	mlc.Transport = grpcTransport
-	mlc.AdvertiseAddr = advertiseIP.String()
-	mlc.AdvertisePort = advertisePort
-	mlc.LogOutput = io.Discard
-
-	n := &Node{
-		log: cfg.Log,
-		cfg: cfg,
-		m:   newMetrics(),
-
-		conflictQueue:        queue.New(1),
-		notifyObserversQueue: queue.New(1),
-
-		peerStates: make(map[string]messages.State),
-		peers:      make(map[string]peer.Peer),
-	}
-
-	nd := &nodeDelegate{Node: n}
-	mlc.Events = nd
-	mlc.Delegate = nd
-	mlc.Conflict = nd
-
-	ml, err := memberlist.Create(mlc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create memberlist: %w", err)
-	}
-
-	n.ml = ml
-	n.broadcasts.NumNodes = func() int { return len(n.Peers()) }
-	n.broadcasts.RetransmitMult = mlc.RetransmitMult
-
-	// Include some extra metrics.
-	n.m.Add(
-		newMemberlistCollector(ml),
-		transportMetrics,
-		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-			Name: "cluster_node_lamport_time",
-			Help: "The current lamport time of the node.",
-		}, func() float64 {
-			return float64(n.clock.Now())
-		}),
-	)
-
-	return n, nil
-}
-
-// NewHTTPNode creates an unstarted Node to participulate in a cluster. An error
-// will be returned if the provided config is invalid.
-func NewHTTPNode(cli *http.Client, cfg Config) (*Node, error) {
+//
+// Before starting the Node, the caller has to wire up the Node's HTTP handlers
+// on the base route provided by the Handler method.
+// If Node is intended to be reachable over non-TLS HTTP/2 connections, then
+// the http.Server the routes are registered on must make use of the
+// golang.org/x/net/http2/h2c package to enable upgrading incoming plain HTTP
+// connections to HTTP/2.
+// Similarly, if the Node is intended to initiate non-TLS outgoing connections,
+// the provided cli should be configured properly (with AllowHTTP: true and a
+// custom DialTLS function).
+func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
