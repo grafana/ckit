@@ -111,9 +111,9 @@ type Node struct {
 	// supports updating peers in-place?
 
 	peerMut    sync.RWMutex
-	peerStates map[string]messages.State // State lookup for a node name
-	peers      map[string]Peer           // Current list of peers & their states
-	peerCache  []Peer                    // Slice version of peers; keep in sync with peers
+	peerStates map[string]stateMessage // State lookup for a node name
+	peers      map[string]Peer         // Current list of peers & their states
+	peerCache  []Peer                  // Slice version of peers; keep in sync with peers
 }
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
@@ -178,7 +178,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		conflictQueue:        queue.New(1),
 		notifyObserversQueue: queue.New(1),
 
-		peerStates: make(map[string]messages.State),
+		peerStates: make(map[string]stateMessage),
 		peers:      make(map[string]Peer),
 
 		baseRoute: baseRoute,
@@ -401,9 +401,9 @@ func (n *Node) changeState(to PeerState, onDone func()) error {
 	n.localState = to
 	n.m.nodeInfo.MustSet("state", to.String())
 
-	stateMsg := messages.State{
+	stateMsg := stateMessage{
 		NodeName: n.cfg.Name,
-		NewState: uint(n.localState),
+		NewState: n.localState,
 		Time:     n.clock.Tick(),
 	}
 
@@ -423,7 +423,7 @@ func (n *Node) changeState(to PeerState, onDone func()) error {
 // message hasn't been seen before.
 //
 // handleStateMessage must be called with n.stateMut held for reading.
-func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
+func (n *Node) handleStateMessage(msg stateMessage) (newMessage bool) {
 	n.clock.Observe(msg.Time)
 
 	n.peerMut.Lock()
@@ -439,9 +439,9 @@ func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 		// A peer has a newer message about ourselves, likely from a previous
 		// instance of the process. We'll ignore the message and replace it with a
 		// newer message reflecting our current state.
-		msg = messages.State{
+		msg = stateMessage{
 			NodeName: n.cfg.Name,
-			NewState: uint(n.localState),
+			NewState: n.localState,
 			Time:     n.clock.Tick(),
 		}
 	} else {
@@ -451,7 +451,7 @@ func (n *Node) handleStateMessage(msg messages.State) (newMessage bool) {
 	n.peerStates[msg.NodeName] = msg
 
 	if p, ok := n.peers[msg.NodeName]; ok {
-		p.State = PeerState(msg.NewState)
+		p.State = msg.NewState
 		n.peers[msg.NodeName] = p
 		n.handlePeersChanged()
 	}
@@ -595,7 +595,7 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 	case messages.TypeState:
 		nd.m.gossipEventsTotal.WithLabelValues(eventStateChange).Inc()
 
-		var s messages.State
+		var s stateMessage
 		if err := messages.Decode(buf, &s); err != nil {
 			level.Error(nd.log).Log("msg", "failed to decode state message", "err", err)
 			return
@@ -635,7 +635,7 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 
 	ls := localState{
 		CurrentTime: nd.clock.Now(),
-		NodeStates:  make([]messages.State, 0, len(nd.peers)),
+		NodeStates:  make([]stateMessage, 0, len(nd.peers)),
 	}
 
 	// Our local state will have one NodeState for each peer we're currently
@@ -650,9 +650,9 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 			continue
 		}
 
-		ls.NodeStates = append(ls.NodeStates, messages.State{
+		ls.NodeStates = append(ls.NodeStates, stateMessage{
 			NodeName: p,
-			NewState: uint(PeerStateViewer),
+			NewState: PeerStateViewer,
 			Time:     lamport.Time(0),
 		})
 	}
@@ -677,7 +677,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 	// We'll be doing a full sync of state messages that another peer knows
 	// about. After the end of the full sync, we'll want to gossip new messages
 	// we've discovered to our peers.
-	var newMessages = make([]messages.State, 0, len(rs.NodeStates))
+	var newMessages = make([]stateMessage, 0, len(rs.NodeStates))
 	defer func() {
 		// This must be done after we unlock nd.peerMut, since QueueBroadcast will
 		// call nd.Peers.
@@ -696,7 +696,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		peersChanged bool
 
 		// Map of remote states by name to optimize lookups.
-		remoteStates = make(map[string]messages.State, len(rs.NodeStates))
+		remoteStates = make(map[string]stateMessage, len(rs.NodeStates))
 	)
 
 	// Merge in node states that the remote peer kept.
@@ -715,9 +715,9 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 			// Our remote peer has a newer message about ourselves, likely from a
 			// previous instance of the process. We'll ignore the message and replace
 			// it with a newer message reflecting our current state.
-			msg = messages.State{
+			msg = stateMessage{
 				NodeName: nd.cfg.Name,
-				NewState: uint(nd.CurrentState()),
+				NewState: nd.CurrentState(),
 				Time:     nd.clock.Tick(),
 			}
 		} else {
@@ -727,7 +727,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		nd.peerStates[msg.NodeName] = msg
 
 		if p, ok := nd.peers[msg.NodeName]; ok {
-			p.State = PeerState(msg.NewState)
+			p.State = msg.NewState
 			nd.peers[msg.NodeName] = p
 			peersChanged = true
 		}
@@ -761,7 +761,7 @@ type localState struct {
 	CurrentTime lamport.Time
 	// NodeStates holds the set of states for all peers of a node. States may
 	// have a lamport time of 0 for nodes that have not broadcast a state yet.
-	NodeStates []messages.State
+	NodeStates []stateMessage
 }
 
 func encodeLocalState(ls *localState) ([]byte, error) {
@@ -801,7 +801,7 @@ func (nd *nodeDelegate) nodeToPeer(node *memberlist.Node) Peer {
 		Name:  node.Name,
 		Addr:  node.Address(),
 		Self:  node.Name == nd.cfg.Name,
-		State: PeerState(nd.peerStates[node.Name].NewState),
+		State: nd.peerStates[node.Name].NewState,
 	}
 }
 
