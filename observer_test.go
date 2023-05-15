@@ -3,14 +3,13 @@ package ckit
 import (
 	"testing"
 
-	"github.com/grafana/ckit/peer"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParticipantObserver(t *testing.T) {
 	tt := []struct {
 		name          string
-		before, after []peer.Peer
+		before, after []Peer
 		shouldCall    bool
 	}{
 		{
@@ -22,25 +21,25 @@ func TestParticipantObserver(t *testing.T) {
 		{
 			name:       "new non-participant",
 			before:     nil,
-			after:      []peer.Peer{{Name: "foo", State: peer.StateViewer}},
+			after:      []Peer{{Name: "foo", State: PeerStateViewer}},
 			shouldCall: false,
 		},
 		{
 			name:       "new participant",
 			before:     nil,
-			after:      []peer.Peer{{Name: "foo", State: peer.StateParticipant}},
+			after:      []Peer{{Name: "foo", State: PeerStateParticipant}},
 			shouldCall: true,
 		},
 		{
 			name:       "existing participant",
-			before:     []peer.Peer{{Name: "foo", State: peer.StateParticipant}},
-			after:      []peer.Peer{{Name: "foo", State: peer.StateParticipant}},
+			before:     []Peer{{Name: "foo", State: PeerStateParticipant}},
+			after:      []Peer{{Name: "foo", State: PeerStateParticipant}},
 			shouldCall: false,
 		},
 		{
 			name:       "existing participant changed",
-			before:     []peer.Peer{{Name: "foo", Addr: "oldaddr", State: peer.StateParticipant}},
-			after:      []peer.Peer{{Name: "foo", Addr: "newaddr", State: peer.StateParticipant}},
+			before:     []Peer{{Name: "foo", Addr: "oldaddr", State: PeerStateParticipant}},
+			after:      []Peer{{Name: "foo", Addr: "newaddr", State: PeerStateParticipant}},
 			shouldCall: true,
 		},
 	}
@@ -51,7 +50,7 @@ func TestParticipantObserver(t *testing.T) {
 
 			obs := participantObserver{
 				lastParticipants: tc.before,
-				next: FuncObserver(func([]peer.Peer) {
+				next: FuncObserver(func([]Peer) {
 					called = true
 				}),
 			}

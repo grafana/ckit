@@ -7,8 +7,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/grafana/ckit"
 	"github.com/grafana/ckit/internal/chash"
-	"github.com/grafana/ckit/peer"
 )
 
 // Op is used to signify how a hash is intended to be used.
@@ -42,29 +42,29 @@ type Sharder interface {
 	//
 	// An error will be returned if the type of eligible peers for the provided
 	// op is less than numOwners.
-	Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error)
+	Lookup(key Key, numOwners int, op Op) ([]ckit.Peer, error)
 
 	// Peers gets the current set of non-viewer peers used for sharding.
-	Peers() []peer.Peer
+	Peers() []ckit.Peer
 
 	// SetPeers updates the set of peers used for sharding. Peers will be ignored
 	// if they are a viewer.
-	SetPeers(ps []peer.Peer)
+	SetPeers(ps []ckit.Peer)
 }
 
 // chasher wraps around two chash.Hash and adds logic for Op.
 type chasher struct {
 	peersMut sync.RWMutex
-	peers    map[string]peer.Peer // Set of all peers shared across both hashes
+	peers    map[string]ckit.Peer // Set of all peers shared across both hashes
 
 	read, readWrite chash.Hash
 }
 
-func (ch *chasher) Peers() []peer.Peer {
+func (ch *chasher) Peers() []ckit.Peer {
 	ch.peersMut.RLock()
 	defer ch.peersMut.RUnlock()
 
-	ps := make([]peer.Peer, 0, len(ch.peers))
+	ps := make([]ckit.Peer, 0, len(ch.peers))
 	for _, p := range ch.peers {
 		ps = append(ps, p)
 	}
@@ -73,11 +73,11 @@ func (ch *chasher) Peers() []peer.Peer {
 	return ps
 }
 
-func (ch *chasher) SetPeers(ps []peer.Peer) {
+func (ch *chasher) SetPeers(ps []ckit.Peer) {
 	sort.Slice(ps, func(i, j int) bool { return ps[i].Name < ps[j].Name })
 
 	var (
-		newPeers     = make(map[string]peer.Peer, len(ps))
+		newPeers     = make(map[string]ckit.Peer, len(ps))
 		newRead      = make([]string, 0, len(ps))
 		newReadWrite = make([]string, 0, len(ps))
 	)
@@ -86,11 +86,11 @@ func (ch *chasher) SetPeers(ps []peer.Peer) {
 		// NOTE(rfratto): newRead and newReadWrite remain in sorted order since we
 		// append to them from the already-sorted ps slice.
 		switch p.State {
-		case peer.StateParticipant:
+		case ckit.PeerStateParticipant:
 			newRead = append(newRead, p.Name)
 			newReadWrite = append(newReadWrite, p.Name)
 			newPeers[p.Name] = p
-		case peer.StateTerminating:
+		case ckit.PeerStateTerminating:
 			newRead = append(newRead, p.Name)
 			newPeers[p.Name] = p
 		}
@@ -104,7 +104,7 @@ func (ch *chasher) SetPeers(ps []peer.Peer) {
 	ch.readWrite.SetNodes(newReadWrite)
 }
 
-func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error) {
+func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]ckit.Peer, error) {
 	ch.peersMut.RLock()
 	defer ch.peersMut.RUnlock()
 
@@ -125,7 +125,7 @@ func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error) {
 		return nil, err
 	}
 
-	res := make([]peer.Peer, len(names))
+	res := make([]ckit.Peer, len(names))
 	for i, name := range names {
 		p, ok := ch.peers[name]
 		if !ok {

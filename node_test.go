@@ -14,7 +14,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/ckit/internal/testlogger"
-	"github.com/grafana/ckit/peer"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/net/http2"
@@ -71,7 +70,7 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 	}()
 	t.Cleanup(func() { require.NoError(t, httpServer.Shutdown(context.Background())) })
 
-	node.Observe(FuncObserver(func(peers []peer.Peer) {
+	node.Observe(FuncObserver(func(peers []Peer) {
 		names := make([]string, len(peers))
 		for i := range peers {
 			names[i] = fmt.Sprintf("%s (%s)", peers[i].Name, peers[i].State)
@@ -95,20 +94,20 @@ func TestNode_State(t *testing.T) {
 		n, _ := newTestNode(t, testlogger.New(t), "node-a")
 		runTestNode(t, n, nil)
 
-		require.Equal(t, peer.StateViewer, n.CurrentState())
+		require.Equal(t, PeerStateViewer, n.CurrentState())
 	})
 
 	t.Run("can move states", func(t *testing.T) {
 		n, _ := newTestNode(t, testlogger.New(t), "node-a")
 		runTestNode(t, n, nil)
 
-		err := n.ChangeState(context.Background(), peer.StateParticipant)
+		err := n.ChangeState(context.Background(), PeerStateParticipant)
 		require.NoError(t, err)
 
-		require.Equal(t, peer.StateParticipant, n.CurrentState())
+		require.Equal(t, PeerStateParticipant, n.CurrentState())
 
 		// Check an invalid state change (StateParticipant -> StateViewer)
-		err = n.ChangeState(context.Background(), peer.StateViewer)
+		err = n.ChangeState(context.Background(), PeerStateViewer)
 		require.EqualError(t, err, "invalid transition from participant to viewer", "expected state change to be rejected")
 	})
 
@@ -127,14 +126,14 @@ func TestNode_State(t *testing.T) {
 		// Make two changes: make node-a a participant and node-b a viewer.
 		// We then want to check that each node is (eventually) aware of the other
 		// node's new state.
-		require.NoError(t, a.ChangeState(ctx, peer.StateParticipant))
+		require.NoError(t, a.ChangeState(ctx, PeerStateParticipant))
 
-		require.NoError(t, b.ChangeState(ctx, peer.StateParticipant))
-		require.NoError(t, b.ChangeState(ctx, peer.StateTerminating))
+		require.NoError(t, b.ChangeState(ctx, PeerStateParticipant))
+		require.NoError(t, b.ChangeState(ctx, PeerStateTerminating))
 
 		// Wait for each node to be aware of the other's state change.
-		waitPeerState(t, b, a.cfg.Name, peer.StateParticipant)
-		waitPeerState(t, a, b.cfg.Name, peer.StateTerminating)
+		waitPeerState(t, b, a.cfg.Name, PeerStateParticipant)
+		waitPeerState(t, a, b.cfg.Name, PeerStateTerminating)
 	})
 
 	t.Run("nodes can restart in viewer state", func(t *testing.T) {
@@ -153,11 +152,11 @@ func TestNode_State(t *testing.T) {
 
 		// Start b and then transition it into Terminating.
 		require.NoError(t, b.Start([]string{aAddr}))
-		require.NoError(t, b.ChangeState(ctx, peer.StateParticipant))
-		require.NoError(t, b.ChangeState(ctx, peer.StateTerminating))
+		require.NoError(t, b.ChangeState(ctx, PeerStateParticipant))
+		require.NoError(t, b.ChangeState(ctx, PeerStateTerminating))
 
 		// Wait for a to know b is terminating and close the node.
-		waitPeerState(t, a, b.cfg.Name, peer.StateTerminating)
+		waitPeerState(t, a, b.cfg.Name, PeerStateTerminating)
 		require.NoError(t, b.Stop())
 
 		// Wait for a to remove b from its peers.
@@ -171,11 +170,11 @@ func TestNode_State(t *testing.T) {
 		defer b.Stop()
 
 		// Wait for a to know b is a viewer.
-		waitPeerState(t, a, b.cfg.Name, peer.StateViewer)
+		waitPeerState(t, a, b.cfg.Name, PeerStateViewer)
 	})
 }
 
-func waitPeerState(t *testing.T, node *Node, peerName string, expect peer.State) {
+func waitPeerState(t *testing.T, node *Node, peerName string, expect PeerState) {
 	t.Helper()
 
 	waitClusterState(t, node, func(n *Node) bool {
@@ -195,7 +194,7 @@ func waitClusterState(t *testing.T, node *Node, check func(*Node) bool) {
 	t.Helper()
 
 	done := make(chan struct{}, 1)
-	node.Observe(FuncObserver(func([]peer.Peer) {
+	node.Observe(FuncObserver(func([]Peer) {
 		if check(node) {
 			select {
 			case done <- struct{}{}:
@@ -230,7 +229,7 @@ func TestNode_Observe(t *testing.T) {
 
 		runTestNode(t, a, nil)
 
-		a.Observe(FuncObserver(func([]peer.Peer) {
+		a.Observe(FuncObserver(func([]Peer) {
 			invoked.Inc()
 		}))
 
@@ -250,7 +249,7 @@ func TestNode_Observe(t *testing.T) {
 			b, _     = newTestNode(t, l, "node-b")
 		)
 
-		a.Observe(FuncObserver(func(_ []peer.Peer) {
+		a.Observe(FuncObserver(func(_ []Peer) {
 			invoked.Inc()
 		}))
 
@@ -279,7 +278,7 @@ func TestNode_Observe(t *testing.T) {
 		observeCh := make(chan struct{})
 
 		var unregister func()
-		unregister = a.Observe(FuncObserver(func(_ []peer.Peer) {
+		unregister = a.Observe(FuncObserver(func(_ []Peer) {
 			close(observeCh) // Panics if called more than once
 			unregister()
 		}))
@@ -315,7 +314,7 @@ func TestNode_Observe(t *testing.T) {
 
 		observeCh := make(chan struct{})
 
-		unregister := a.Observe(FuncObserver(func(_ []peer.Peer) {
+		unregister := a.Observe(FuncObserver(func(_ []Peer) {
 			close(observeCh) // Panics if called more than once
 		}))
 
@@ -360,10 +359,10 @@ func TestNode_Peers(t *testing.T) {
 			return len(a.Peers()) == 3
 		})
 
-		expectPeers := []peer.Peer{
-			{Name: "node-a", Addr: aAddr, Self: true, State: peer.StateViewer},
-			{Name: "node-b", Addr: bAddr, Self: false, State: peer.StateViewer},
-			{Name: "node-c", Addr: cAddr, Self: false, State: peer.StateViewer},
+		expectPeers := []Peer{
+			{Name: "node-a", Addr: aAddr, Self: true, State: PeerStateViewer},
+			{Name: "node-b", Addr: bAddr, Self: false, State: PeerStateViewer},
+			{Name: "node-c", Addr: cAddr, Self: false, State: PeerStateViewer},
 		}
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})
@@ -396,9 +395,9 @@ func TestNode_Peers(t *testing.T) {
 			return len(a.Peers()) == 2
 		})
 
-		expectPeers := []peer.Peer{
-			{Name: "node-a", Addr: aAddr, Self: true, State: peer.StateViewer},
-			{Name: "node-b", Addr: bAddr, Self: false, State: peer.StateViewer},
+		expectPeers := []Peer{
+			{Name: "node-a", Addr: aAddr, Self: true, State: PeerStateViewer},
+			{Name: "node-b", Addr: bAddr, Self: false, State: PeerStateViewer},
 		}
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})

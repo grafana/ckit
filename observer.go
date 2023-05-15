@@ -2,22 +2,20 @@ package ckit
 
 import (
 	"sort"
-
-	"github.com/grafana/ckit/peer"
 )
 
 // An Observer watches a Node, waiting for its peers to change.
 type Observer interface {
 	// NotifyPeersChanged is invoked any time the set of Peers for a node
 	// changes. The slice of peers must not be modified.
-	NotifyPeersChanged(peers []peer.Peer)
+	NotifyPeersChanged(peers []Peer)
 }
 
 // FuncObserver implements Observer.
-type FuncObserver func(peers []peer.Peer)
+type FuncObserver func(peers []Peer)
 
 // NotifyPeersChanged implements Observer.
-func (f FuncObserver) NotifyPeersChanged(peers []peer.Peer) { f(peers) }
+func (f FuncObserver) NotifyPeersChanged(peers []Peer) { f(peers) }
 
 // ParticipantObserver wraps an observer and filters out events where the list
 // of peers in the Participants state haven't changed. When the set of
@@ -28,15 +26,15 @@ func ParticipantObserver(next Observer) Observer {
 }
 
 type participantObserver struct {
-	lastParticipants []peer.Peer // Participants ordered by name
+	lastParticipants []Peer // Participants ordered by name
 	next             Observer
 }
 
-func (po *participantObserver) NotifyPeersChanged(peers []peer.Peer) {
+func (po *participantObserver) NotifyPeersChanged(peers []Peer) {
 	// Filter peers down to those in StateParticipant.
-	participants := make([]peer.Peer, 0, len(peers))
+	participants := make([]Peer, 0, len(peers))
 	for _, p := range peers {
-		if p.State == peer.StateParticipant {
+		if p.State == PeerStateParticipant {
 			participants = append(participants, p)
 		}
 	}
@@ -50,7 +48,7 @@ func (po *participantObserver) NotifyPeersChanged(peers []peer.Peer) {
 	po.next.NotifyPeersChanged(peers)
 }
 
-func peersEqual(a, b []peer.Peer) bool {
+func peersEqual(a, b []Peer) bool {
 	if len(a) != len(b) {
 		return false
 	}

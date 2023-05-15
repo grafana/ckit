@@ -2,7 +2,6 @@ package shard
 
 import (
 	"github.com/grafana/ckit"
-	"github.com/grafana/ckit/peer"
 )
 
 // Observer returns a [ckit.Observer] which updates the nodes assigned to a
@@ -17,6 +16,6 @@ func Observer(s Sharder) ckit.Observer {
 
 type sharderObserver struct{ s Sharder }
 
-func (o *sharderObserver) NotifyPeersChanged(peers []peer.Peer) {
+func (o *sharderObserver) NotifyPeersChanged(peers []ckit.Peer) {
 	o.s.SetPeers(peers)
 }

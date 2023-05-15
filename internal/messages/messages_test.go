@@ -3,12 +3,11 @@ package messages
 import (
 	"testing"
 
-	"github.com/grafana/ckit/peer"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMessages(t *testing.T) {
-	md := State{NodeName: "test", NewState: peer.StateParticipant}
+	md := State{NodeName: "test", NewState: 1}
 
 	raw, err := Encode(&md)
 	require.NoError(t, err)
@@ -27,7 +26,7 @@ func TestMessages_Invalid(t *testing.T) {
 	require.Panics(t, func() { Encode(fakeMessage{ty: TypeInvalid}) })
 	require.Panics(t, func() { Encode(fakeMessage{ty: 254}) })
 
-	md := State{NodeName: "test", NewState: peer.StateParticipant}
+	md := State{NodeName: "test", NewState: 1}
 	raw, err := Encode(&md)
 	require.NoError(t, err)
 
