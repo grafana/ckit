@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/go-kit/log v0.1.0
-	github.com/hashicorp/go-msgpack v0.5.3
+	github.com/hashicorp/go-msgpack v0.5.5
 	github.com/hashicorp/go-multierror v1.1.0
 	github.com/hashicorp/memberlist v0.3.1
 	github.com/prometheus/client_golang v1.12.1
