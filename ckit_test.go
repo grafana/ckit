@@ -69,14 +69,13 @@ func Example() {
 	//
 	// Note that Observers are invoked in the background and so this function
 	// might not always execute within this example.
-	node.Observe(ckit.FuncObserver(func(peers []peer.Peer) (reregister bool) {
+	node.Observe(ckit.FuncObserver(func(peers []peer.Peer) {
 		names := make([]string, len(peers))
 		for i, p := range peers {
 			names[i] = p.Name
 		}
 
 		level.Info(cfg.Log).Log("msg", "peers changed", "new_peers", strings.Join(names, ","))
-		return true
 	}))
 
 	mux := http.NewServeMux()

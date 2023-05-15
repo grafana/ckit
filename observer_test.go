@@ -51,13 +51,12 @@ func TestParticipantObserver(t *testing.T) {
 
 			obs := participantObserver{
 				lastParticipants: tc.before,
-				next: FuncObserver(func([]peer.Peer) bool {
+				next: FuncObserver(func([]peer.Peer) {
 					called = true
-					return true
 				}),
 			}
 
-			_ = obs.NotifyPeersChanged(tc.after)
+			obs.NotifyPeersChanged(tc.after)
 			require.Equal(t, tc.shouldCall, called)
 		})
 	}

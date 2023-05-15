@@ -99,7 +99,7 @@ type Node struct {
 	stopped    bool
 
 	observersMut sync.Mutex
-	observers    []Observer
+	observers    []*addressableObserver
 
 	// peerStates is updated any time a messages.State broadcast is received, and
 	// may have keys for node names that do not exist in the peers map. These
@@ -503,20 +503,48 @@ func (n *Node) handlePeersChanged() {
 	n.notifyObserversQueue.Enqueue(newPeers)
 }
 
-// Observe registers o to be informed when the cluster changes. o will be
-// notified when a new peer is discovered, an existing peer shuts down, or the
-// state of a peer changes. Observers are invoked in the order they were
-// registered.
+// Observe registers o to be informed asynchronously when the cluster changes.
+// o will be notified when a new peer is discovered, an existing peer shuts
+// down, or the state of a peer changes. Observers are invoked in the order
+// they were registered.
 //
 // Observers are notified in the background about the most recent state of the
 // cluster, ignoring intermediate changed events that occurred while a
-// long-running observer is still processing an older change.
-func (n *Node) Observe(o Observer) {
+// long-running observer is still processing an older change. The list of peers
+// passed to an observer may not be up-to-date.
+//
+// Call the returned unregister function to remove the observer.
+func (n *Node) Observe(o Observer) (unregister func()) {
 	n.observersMut.Lock()
 	defer n.observersMut.Unlock()
-	n.observers = append(n.observers, o)
+
+	ao := &addressableObserver{o}
+
+	n.observers = append(n.observers, ao)
 	n.m.nodeObservers.Set(float64(len(n.observers)))
+
+	return func() {
+		// Schedule n to be removed in the background in case unregister is being
+		// called from within the Observer.
+		go func() {
+			n.observersMut.Lock()
+			defer n.observersMut.Unlock()
+
+			newObservers := make([]*addressableObserver, 0, len(n.observers)-1)
+			for _, o := range n.observers {
+				if o != ao {
+					newObservers = append(newObservers, o)
+				}
+			}
+			n.observers = newObservers
+			n.m.nodeObservers.Set(float64(len(n.observers)))
+		}()
+	}
 }
+
+// addressableObserver wraps around an Observer to guarantee it's addressible
+// so it can be removed from the n.observers slice.
+type addressableObserver struct{ Observer }
 
 func (n *Node) notifyObservers(peers []peer.Peer) {
 	n.observersMut.Lock()
@@ -528,16 +556,9 @@ func (n *Node) notifyObservers(peers []peer.Peer) {
 	timer := prometheus.NewTimer(n.m.nodeUpdateDuration)
 	defer timer.ObserveDuration()
 
-	newObservers := make([]Observer, 0, len(n.observers))
 	for _, o := range n.observers {
-		rereg := o.NotifyPeersChanged(peers)
-		if rereg {
-			newObservers = append(newObservers, o)
-		}
+		o.NotifyPeersChanged(peers)
 	}
-
-	n.observers = newObservers
-	n.m.nodeObservers.Set(float64(len(n.observers)))
 }
 
 // nodeDelegate is used to implement memberlist.*Delegate types without

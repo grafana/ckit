@@ -71,13 +71,12 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 	}()
 	t.Cleanup(func() { require.NoError(t, httpServer.Shutdown(context.Background())) })
 
-	node.Observe(FuncObserver(func(peers []peer.Peer) (reregister bool) {
+	node.Observe(FuncObserver(func(peers []peer.Peer) {
 		names := make([]string, len(peers))
 		for i := range peers {
 			names[i] = fmt.Sprintf("%s (%s)", peers[i].Name, peers[i].State)
 		}
 		level.Debug(cfg.Log).Log("msg", "peers changed", "peers", strings.Join(names, ", "))
-		return true
 	}))
 
 	return node, cfg.AdvertiseAddr
@@ -196,12 +195,13 @@ func waitClusterState(t *testing.T, node *Node, check func(*Node) bool) {
 	t.Helper()
 
 	done := make(chan struct{}, 1)
-	node.Observe(FuncObserver(func([]peer.Peer) (reregister bool) {
+	node.Observe(FuncObserver(func([]peer.Peer) {
 		if check(node) {
-			done <- struct{}{}
-			return false
+			select {
+			case done <- struct{}{}:
+			default:
+			}
 		}
-		return true
 	}))
 
 	// Do an initial check, we might be already good.
@@ -230,9 +230,8 @@ func TestNode_Observe(t *testing.T) {
 
 		runTestNode(t, a, nil)
 
-		a.Observe(FuncObserver(func([]peer.Peer) (reregister bool) {
+		a.Observe(FuncObserver(func([]peer.Peer) {
 			invoked.Inc()
-			return true
 		}))
 
 		runTestNode(t, b, []string{aAddr})
@@ -242,19 +241,17 @@ func TestNode_Observe(t *testing.T) {
 		}, 5*time.Second, 250*time.Millisecond)
 	})
 
-	t.Run("observers can reregister", func(t *testing.T) {
+	t.Run("observers are invoked more than once", func(t *testing.T) {
 		var (
-			l = testlogger.New(t)
-			//ctx = context.Background()
+			l       = testlogger.New(t)
 			invoked atomic.Int64
 
 			a, aAddr = newTestNode(t, l, "node-a")
 			b, _     = newTestNode(t, l, "node-b")
 		)
 
-		a.Observe(FuncObserver(func(_ []peer.Peer) (reregister bool) {
+		a.Observe(FuncObserver(func(_ []peer.Peer) {
 			invoked.Inc()
-			return true
 		}))
 
 		runTestNode(t, a, nil)
@@ -271,7 +268,7 @@ func TestNode_Observe(t *testing.T) {
 		}, 5*time.Second, 250*time.Millisecond)
 	})
 
-	t.Run("observers can unregister", func(t *testing.T) {
+	t.Run("observers can unregister in the callback", func(t *testing.T) {
 		var (
 			l = testlogger.New(t)
 
@@ -281,9 +278,10 @@ func TestNode_Observe(t *testing.T) {
 
 		observeCh := make(chan struct{})
 
-		a.Observe(FuncObserver(func(_ []peer.Peer) (reregister bool) {
+		var unregister func()
+		unregister = a.Observe(FuncObserver(func(_ []peer.Peer) {
 			close(observeCh) // Panics if called more than once
-			return false
+			unregister()
 		}))
 
 		runTestNode(t, a, nil)
@@ -295,6 +293,42 @@ func TestNode_Observe(t *testing.T) {
 			require.FailNow(t, "Observe never invoked")
 		}
 		<-observeCh // Wait for our channel to be closed
+
+		// Start our second node. We'll wait for node-a to be aware of it, and then
+		// sleep for a bit longer just to make sure the background goroutine
+		// processing peer events never invokes our callback again.
+		runTestNode(t, b, []string{aAddr})
+
+		waitClusterState(t, a, func(n *Node) bool {
+			return len(n.Peers()) == 2
+		})
+		time.Sleep(500 * time.Millisecond)
+	})
+
+	t.Run("observers can unregister", func(t *testing.T) {
+		var (
+			l = testlogger.New(t)
+
+			a, aAddr = newTestNode(t, l, "node-a")
+			b, _     = newTestNode(t, l, "node-b")
+		)
+
+		observeCh := make(chan struct{})
+
+		unregister := a.Observe(FuncObserver(func(_ []peer.Peer) {
+			close(observeCh) // Panics if called more than once
+		}))
+
+		runTestNode(t, a, nil)
+
+		select {
+		case <-observeCh:
+			// no-op
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "Observe never invoked")
+		}
+		<-observeCh  // Wait for our channel to be closed
+		unregister() // Unregister our observer.
 
 		// Start our second node. We'll wait for node-a to be aware of it, and then
 		// sleep for a bit longer just to make sure the background goroutine
