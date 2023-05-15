@@ -13,8 +13,8 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/rfratto/ckit/internal/testlogger"
-	"github.com/rfratto/ckit/peer"
+	"github.com/grafana/ckit/internal/testlogger"
+	"github.com/grafana/ckit/peer"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"golang.org/x/net/http2"

@@ -7,8 +7,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/rfratto/ckit/internal/chash"
-	"github.com/rfratto/ckit/peer"
+	"github.com/grafana/ckit/internal/chash"
+	"github.com/grafana/ckit/peer"
 )
 
 // Op is used to signify how a hash is intended to be used.

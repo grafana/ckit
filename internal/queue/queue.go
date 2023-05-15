@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/rfratto/ckit/internal/lamport"
+	"github.com/grafana/ckit/internal/lamport"
 )
 
 // Unbounded indicates the Queue does not have a limit.

@@ -1,4 +1,4 @@
-module github.com/rfratto/ckit
+module github.com/grafana/ckit
 
 go 1.19
 

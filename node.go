@@ -14,15 +14,15 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/grafana/ckit/internal/gossiphttp"
+	"github.com/grafana/ckit/internal/lamport"
+	"github.com/grafana/ckit/internal/messages"
+	"github.com/grafana/ckit/internal/queue"
+	"github.com/grafana/ckit/peer"
+	"github.com/grafana/ckit/shard"
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/internal/gossiphttp"
-	"github.com/rfratto/ckit/internal/lamport"
-	"github.com/rfratto/ckit/internal/messages"
-	"github.com/rfratto/ckit/internal/queue"
-	"github.com/rfratto/ckit/peer"
-	"github.com/rfratto/ckit/shard"
 )
 
 var (

@@ -3,8 +3,8 @@ package messages
 import (
 	"fmt"
 
-	"github.com/rfratto/ckit/internal/lamport"
-	"github.com/rfratto/ckit/peer"
+	"github.com/grafana/ckit/internal/lamport"
+	"github.com/grafana/ckit/peer"
 )
 
 // State represents a State change broadcast from a node.

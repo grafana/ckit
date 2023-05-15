@@ -1,8 +1,8 @@
 package gossiphttp
 
 import (
+	"github.com/grafana/ckit/internal/metricsutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/internal/metricsutil"
 )
 
 type metrics struct {

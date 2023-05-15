@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/rfratto/ckit"
-	"github.com/rfratto/ckit/peer"
-	"github.com/rfratto/ckit/shard"
+	"github.com/grafana/ckit"
+	"github.com/grafana/ckit/peer"
+	"github.com/grafana/ckit/shard"
 	"golang.org/x/net/http2"
 )
 

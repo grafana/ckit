@@ -48,9 +48,9 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/grafana/ckit/internal/queue"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/internal/queue"
 )
 
 // packetBufferSize is the maximum amount of packets that can be held in

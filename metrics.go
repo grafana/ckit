@@ -1,9 +1,9 @@
 package ckit
 
 import (
+	"github.com/grafana/ckit/internal/metricsutil"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rfratto/ckit/internal/metricsutil"
 )
 
 // Possible label values for metrics.gossipEventsTotal

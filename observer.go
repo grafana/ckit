@@ -3,7 +3,7 @@ package ckit
 import (
 	"sort"
 
-	"github.com/rfratto/ckit/peer"
+	"github.com/grafana/ckit/peer"
 )
 
 // An Observer watches a Node, waiting for its peers to change.

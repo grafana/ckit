@@ -3,7 +3,7 @@ package messages
 import (
 	"testing"
 
-	"github.com/rfratto/ckit/peer"
+	"github.com/grafana/ckit/peer"
 	"github.com/stretchr/testify/require"
 )
 
