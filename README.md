@@ -1,5 +1,7 @@
 # ckit
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/grafana/ckit.svg)](https://pkg.go.dev/github.com/grafana/ckit)
+
 ckit (clustering toolkit) is a lightweight package for creating clusters that
 use [consistent hashing][] for workload distribution.
 
