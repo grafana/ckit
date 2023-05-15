@@ -50,9 +50,8 @@ func Example() {
 		// AdvertiseAddr will be the address shared with other nodes.
 		AdvertiseAddr: lis.Addr().String(),
 
-		// Cluster changes will be immediately synchronized with a sharder
-		// (when provided).
-		Sharder: ring,
+		// Cluster changes are immediately applied to these set of Observers. These
+		Observers: []ckit.Observer{shard.Observer(ring)},
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
@@ -64,8 +63,8 @@ func Example() {
 		panic(err)
 	}
 
-	// Nodes can optionally emit events to any number of observers to notify when
-	// the list of peers in the cluster has changed.
+	// Nodes can optionally emit events in the background to any number of
+	// observers to notify when the list of peers in the cluster has changed.
 	//
 	// Note that Observers are invoked in the background and so this function
 	// might not always execute within this example.

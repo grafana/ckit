@@ -19,7 +19,6 @@ import (
 	"github.com/grafana/ckit/internal/messages"
 	"github.com/grafana/ckit/internal/queue"
 	"github.com/grafana/ckit/peer"
-	"github.com/grafana/ckit/shard"
 	"github.com/hashicorp/go-msgpack/codec"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
@@ -54,9 +53,11 @@ type Config struct {
 	// Optional logger to use.
 	Log log.Logger
 
-	// Optional sharder to synchronize cluster changes to. Synchronization of the
-	// Sharder happens prior to Observers being notified of changes.
-	Sharder shard.Sharder
+	// A list of observers to synchronously apply cluster changes to. Observers
+	// provided here must not block, otherwise cluster traffic is blocked.
+	//
+	// To observe cluster changes in the background, use [Node.Observe].
+	Observers []Observer
 }
 
 func (c *Config) validate() error {
@@ -494,9 +495,9 @@ func (n *Node) handlePeersChanged() {
 		return newPeers[i].Name < newPeers[j].Name
 	})
 
-	// Notify the sharder first if it's set.
-	if n.cfg.Sharder != nil {
-		n.cfg.Sharder.SetPeers(newPeers)
+	// Notify synchronous subscribers.
+	for _, o := range n.cfg.Observers {
+		o.NotifyPeersChanged(newPeers)
 	}
 
 	n.peerCache = newPeers
