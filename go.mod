@@ -10,7 +10,7 @@ require (
 	github.com/hashicorp/memberlist v0.3.1
 	github.com/prometheus/client_golang v1.15.1
 	github.com/stretchr/testify v1.8.0
-	go.uber.org/atomic v1.9.0
+	go.uber.org/atomic v1.11.0
 	golang.org/x/net v0.7.0
 )
 
