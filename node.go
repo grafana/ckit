@@ -94,9 +94,11 @@ type Node struct {
 	clock lamport.Clock
 
 	stateMut   sync.RWMutex
-	runCancel  context.CancelFunc
 	localState peer.State
-	stopped    bool
+
+	shutdownMut sync.Mutex
+	runCancel   context.CancelFunc
+	stopped     bool
 
 	observersMut sync.Mutex
 	observers    []Observer
@@ -234,8 +236,8 @@ func (n *Node) Handler() (string, http.Handler) { return n.baseRoute, n.handler 
 //
 // Start may not be called after the Node has been stopped.
 func (n *Node) Start(peers []string) error {
-	n.stateMut.Lock()
-	defer n.stateMut.Unlock()
+	n.shutdownMut.Lock()
+	defer n.shutdownMut.Unlock()
 
 	if n.stopped {
 		// n.ml can't be re-used after we stopped, so we need to force error the
@@ -252,6 +254,11 @@ func (n *Node) Start(peers []string) error {
 
 	// Force ourselves back into the pending state. This MUST be done after the
 	// join: join does a state sync and updates our lamport clock.
+	// NOTE: We delay taking stateMut here, because under certain conditions,
+	// it may be contested with another call when merging remote state inside
+	// of Join, leading to a deadlock.
+	n.stateMut.Lock()
+	defer n.stateMut.Unlock()
 	if err := n.changeState(peer.StateViewer, nil); err != nil {
 		return err
 	}
@@ -301,8 +308,8 @@ func (n *Node) run(ctx context.Context) {
 // Observers will no longer be notified about cluster changes after Stop
 // returns.
 func (n *Node) Stop() error {
-	n.stateMut.Lock()
-	defer n.stateMut.Unlock()
+	n.shutdownMut.Lock()
+	defer n.shutdownMut.Unlock()
 
 	if n.runCancel != nil {
 		n.runCancel()
