@@ -467,8 +467,6 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 	var readMut sync.Mutex
 	readCnd := sync.NewCond(&readMut)
 
-	t.metrics.openStreams.Inc()
-
 	pr, pw := io.Pipe()
 
 	req := &http.Request{
@@ -494,6 +492,8 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 		}
 		return nil, err
 	}
+
+	t.metrics.openStreams.Inc()
 
 	packetsClient := &http2Stream{
 		r: resp.Body,
