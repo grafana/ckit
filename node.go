@@ -82,7 +82,6 @@ type Node struct {
 	cfg                  Config
 	ml                   *memberlist.Memberlist
 	broadcasts           memberlist.TransmitLimitedQueue // Make sure peerMut isn't held when updating
-	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
 	baseRoute            string
@@ -123,13 +122,15 @@ type Node struct {
 //
 // Before starting the Node, the caller has to wire up the Node's HTTP handlers
 // on the base route provided by the Handler method.
+//
 // If Node is intended to be reachable over non-TLS HTTP/2 connections, then
 // the http.Server the routes are registered on must make use of the
 // golang.org/x/net/http2/h2c package to enable upgrading incoming plain HTTP
 // connections to HTTP/2.
+//
 // Similarly, if the Node is intended to initiate non-TLS outgoing connections,
-// the provided cli should be configured properly (with AllowHTTP: true and a
-// custom DialTLS function).
+// the provided cli should be configured properly (with AllowHTTP set to true
+// and using a custom DialTLS function to create a non-TLS net.Conn).
 func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -177,7 +178,6 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		cfg: cfg,
 		m:   newMetrics(),
 
-		conflictQueue:        queue.New(1),
 		notifyObserversQueue: queue.New(1),
 
 		peerStates: make(map[string]messages.State),
@@ -227,14 +227,10 @@ func (n *Node) Metrics() prometheus.Collector { return n.m }
 // with an HTTP server before starting the Node.
 func (n *Node) Handler() (string, http.Handler) { return n.baseRoute, n.handler }
 
-// Start runs the Node for clustering with a list of peers to connect to. peers
-// can be an empty list if there is are no peers to connect to; other peers can
-// then connect to this node in their own Start methods.
+// Start starts the Node with a set of peers to connect to. Start may be called
+// multiple times to add additional peers into the memberlist.
 //
-// Start may be called multiple times to reconnect to a different set of peers.
-// Node will be set into StateViewer every time Start is called.
-//
-// Start may not be called after the Node has been stopped.
+// Start may not be called after [Stop] has been called.
 func (n *Node) Start(peers []string) error {
 	n.shutdownMut.Lock()
 	defer n.shutdownMut.Unlock()
@@ -247,40 +243,20 @@ func (n *Node) Start(peers []string) error {
 		return ErrStopped
 	}
 
-	_, err := n.ml.Join(peers)
-	if err != nil {
-		return fmt.Errorf("failed to join memberlist: %w", err)
-	}
-
-	// Force ourselves back into the pending state. This MUST be done after the
-	// join: join does a state sync and updates our lamport clock.
-	// NOTE: We delay taking stateMut here, because under certain conditions,
-	// it may be contested with another call when merging remote state inside
-	// of Join, leading to a deadlock.
-	n.stateMut.Lock()
-	defer n.stateMut.Unlock()
-	if err := n.changeState(peer.StateViewer, nil); err != nil {
-		return err
-	}
-
-	// Join won't return until we've done a push/pull; if there was a name
-	// collision during the join, there will be an enqueued element in the
-	// conflict queue.
-	conflict, ok := n.conflictQueue.TryDequeue()
-	if ok {
-		_ = n.ml.Shutdown()
-
-		conflict := conflict.(*memberlist.Node)
-		return fmt.Errorf("failed to join memberlist: name conflict with %s", conflict.Address())
-	}
-
 	if n.runCancel == nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		go n.run(ctx)
 		n.runCancel = cancel
 	}
 
-	return nil
+	_, err := n.ml.Join(peers)
+	if err != nil {
+		return fmt.Errorf("failed to join memberlist: %w", err)
+	}
+
+	// Broadcast our current state of the node to all peers now that our lamport
+	// clock is roughly synchronized.
+	return n.broadcastCurrentState()
 }
 
 func (n *Node) run(ctx context.Context) {
@@ -301,6 +277,31 @@ func (n *Node) run(ctx context.Context) {
 
 		n.notifyObservers(peers)
 	}
+}
+
+// broadcastCurrentState queues a message to send the current state of the node
+// to the cluster. This should be done after joining a new set of nodes once
+// the lamport clock is synchronized.
+func (n *Node) broadcastCurrentState() error {
+	n.stateMut.RLock()
+	defer n.stateMut.RUnlock()
+
+	stateMsg := messages.State{
+		NodeName: n.cfg.Name,
+		NewState: n.localState,
+		Time:     n.clock.Tick(),
+	}
+
+	// Treat the stateMsg as if it was received externally to track our own state
+	// along with other nodes.
+	n.handleStateMessage(stateMsg)
+
+	bcast, err := messages.Broadcast(&stateMsg, nil)
+	if err != nil {
+		return err
+	}
+	n.broadcasts.QueueBroadcast(bcast)
+	return nil
 }
 
 // Stop stops the Node, removing it from the cluster. Callers should first
@@ -822,5 +823,4 @@ func (nd *nodeDelegate) removePeer(name string) {
 
 func (nd *nodeDelegate) NotifyConflict(existing, other *memberlist.Node) {
 	nd.m.gossipEventsTotal.WithLabelValues(eventNodeConflict).Inc()
-	nd.conflictQueue.Enqueue(other)
 }
