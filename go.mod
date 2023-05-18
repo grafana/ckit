@@ -7,7 +7,7 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/go-msgpack v0.5.5
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/hashicorp/memberlist v0.3.1
+	github.com/hashicorp/memberlist v0.5.0
 	github.com/prometheus/client_golang v1.15.1
 	github.com/stretchr/testify v1.8.2
 	go.uber.org/atomic v1.11.0
