@@ -82,7 +82,6 @@ type Node struct {
 	cfg                  Config
 	ml                   *memberlist.Memberlist
 	broadcasts           memberlist.TransmitLimitedQueue // Make sure peerMut isn't held when updating
-	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
 	baseRoute            string
@@ -177,7 +176,6 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		cfg: cfg,
 		m:   newMetrics(),
 
-		conflictQueue:        queue.New(1),
 		notifyObserversQueue: queue.New(1),
 
 		peerStates: make(map[string]messages.State),
@@ -261,17 +259,6 @@ func (n *Node) Start(peers []string) error {
 	defer n.stateMut.Unlock()
 	if err := n.changeState(peer.StateViewer, nil); err != nil {
 		return err
-	}
-
-	// Join won't return until we've done a push/pull; if there was a name
-	// collision during the join, there will be an enqueued element in the
-	// conflict queue.
-	conflict, ok := n.conflictQueue.TryDequeue()
-	if ok {
-		_ = n.ml.Shutdown()
-
-		conflict := conflict.(*memberlist.Node)
-		return fmt.Errorf("failed to join memberlist: name conflict with %s", conflict.Address())
 	}
 
 	if n.runCancel == nil {
@@ -822,5 +809,4 @@ func (nd *nodeDelegate) removePeer(name string) {
 
 func (nd *nodeDelegate) NotifyConflict(existing, other *memberlist.Node) {
 	nd.m.gossipEventsTotal.WithLabelValues(eventNodeConflict).Inc()
-	nd.conflictQueue.Enqueue(other)
 }
