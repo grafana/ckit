@@ -42,3 +42,16 @@ func (s State) String() string {
 		return fmt.Sprintf("<unknown state %d>", s)
 	}
 }
+
+func toState(s string) (State, error) {
+	switch s {
+	case "viewer":
+		return StateViewer, nil
+	case "participant":
+		return StateParticipant, nil
+	case "terminating":
+		return StateTerminating, nil
+	}
+
+	return 0, fmt.Errorf("unknown state %q", s)
+}

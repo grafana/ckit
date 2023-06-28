@@ -14,13 +14,13 @@ type Peer struct {
 // String returns the name of p.
 func (p Peer) String() string { return p.Name }
 
-// MarshalJSON implements json.Marshaler.
+// MarshalJSON implements [json.Marshaler].
 func (p Peer) MarshalJSON() ([]byte, error) {
 	type peerStatusJSON struct {
-		Name  string `json:"name"`   // Name of the Peer. Unique across the cluster.
-		Addr  string `json:"addr"`   // host:port address of the peer.
-		Self  bool   `json:"isSelf"` // True if Peer is the local Node.
-		State string `json:"state"`  // State of the peer.
+		Name  string `json:"name"`
+		Addr  string `json:"addr"`
+		Self  bool   `json:"isSelf"`
+		State string `json:"state"`
 	}
 	return json.Marshal(&peerStatusJSON{
 		Name:  p.Name,
@@ -28,4 +28,31 @@ func (p Peer) MarshalJSON() ([]byte, error) {
 		Self:  p.Self,
 		State: p.State.String(),
 	})
+}
+
+// UnmarshalJSON implements [json.Unmarshaler].
+func (p *Peer) UnmarshalJSON(b []byte) error {
+	type peerStatusJSON struct {
+		Name  string `json:"name"`
+		Addr  string `json:"addr"`
+		Self  bool   `json:"isSelf"`
+		State string `json:"state"`
+	}
+
+	var psj peerStatusJSON
+
+	if err := json.Unmarshal(b, &psj); err != nil {
+		return err
+	}
+	state, err := toState(psj.State)
+	if err != nil {
+		return err
+	}
+
+	p.Name = psj.Name
+	p.Addr = psj.Addr
+	p.Self = psj.Self
+	p.State = state
+
+	return nil
 }
