@@ -58,7 +58,7 @@ type Config struct {
 	// Sharder happens prior to Observers being notified of changes.
 	Sharder shard.Sharder
 
-	// Optional set of bytes to prevent clusters from accidently merging.
+	// Optional identifier to prevent clusters from accidentally merging.
 	// Nodes are prevented from joining a cluster with an explicit label if
 	// they do not share the same label.
 	Label string
