@@ -59,7 +59,7 @@ type Config struct {
 	Sharder shard.Sharder
 
 	// Optional set of bytes to prevent clusters from accidently merging.
-	// Nodes are prevented from joining a cluster with a explicit label if
+	// Nodes are prevented from joining a cluster with an explicit label if
 	// they do not share the same label.
 	Label string
 }
