@@ -15,6 +15,8 @@ import (
 // local network traffic for Unix-like platforms.
 var DefaultInterfaces = []string{"eth0", "en0"}
 
+const AllInterfaces = "all"
+
 // FirstAddress returns the first IPv4/IPv6 address from the given interface names.
 // Link-local unicast addresses will be ignored if possible.
 func FirstAddress(interfaces []string) (string, error) {
@@ -35,7 +37,7 @@ func firstAddress(interfaces []string, interfaceAddrsFunc NetworkInterfaceAddres
 		bestIP netip.Addr
 	)
 
-	if len(interfaces) == 1 && interfaces[0] == "all" {
+	if len(interfaces) == 1 && interfaces[0] == AllInterfaces {
 		infs, err := interfaceLister()
 		if err != nil {
 			return "", fmt.Errorf("failed to get interface list: %w", err)
