@@ -57,6 +57,11 @@ type Config struct {
 	// Optional sharder to synchronize cluster changes to. Synchronization of the
 	// Sharder happens prior to Observers being notified of changes.
 	Sharder shard.Sharder
+
+	// Optional set of bytes to prevent clusters from accidently merging.
+	// Nodes are prevented from joining a cluster with a explicit label if
+	// they do not share the same label.
+	Label string
 }
 
 func (c *Config) validate() error {
@@ -168,6 +173,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
 	mlc.LogOutput = io.Discard
+	mlc.Label = cfg.Label
 
 	if cfg.Log != nil {
 		mlc.LogOutput = log.NewStdlibAdapter(level.Debug(log.With(cfg.Log, "component", "memberlist")))
