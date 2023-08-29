@@ -8,17 +8,20 @@ import (
 	"net/netip"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 )
 
 // DefaultInterfaces is a default list of common interfaces that are used for
 // local network traffic for Unix-like platforms.
 var DefaultInterfaces = []string{"eth0", "en0"}
 
-const AllInterfaces = "all"
-
-// FirstAddress returns the first IPv4/IPv6 address from the given interface names.
-// Link-local unicast addresses will be ignored if possible.
+// FirstAddress returns the "best" IP address from the given interface names.
+// "best" is defined as follow in decreasing order:
+// - IPv4 valid and not link-local unicast
+// - IPv6 valid and not link-local unicast
+// - IPv4 valid and link-local unicast
+// - IPv6 valid and link-local unicast
+// If none of the above are found, an invalid address is returned.
+// Loopback addresses are never selected.
 func FirstAddress(interfaces []string) (string, error) {
 	return firstAddress(interfaces, getInterfaceAddresses, net.Interfaces)
 }
@@ -37,7 +40,7 @@ func firstAddress(interfaces []string, interfaceAddrsFunc NetworkInterfaceAddres
 		bestIP netip.Addr
 	)
 
-	if len(interfaces) == 1 && interfaces[0] == AllInterfaces {
+	if len(interfaces) == 0 {
 		infs, err := interfaceLister()
 		if err != nil {
 			return "", fmt.Errorf("failed to get interface list: %w", err)
@@ -56,21 +59,21 @@ func firstAddress(interfaces []string, interfaceAddrsFunc NetworkInterfaceAddres
 			continue
 		}
 
-		canditate := filterBestIP(addrs)
-		if !canditate.IsValid() {
+		candidate := filterBestIP(addrs)
+		if !candidate.IsValid() {
 			continue
 		}
 
-		if canditate.Is4() && !canditate.IsLinkLocalUnicast() {
+		if candidate.Is4() && !candidate.IsLinkLocalUnicast() {
 			// Best address possible, we can return early.
-			return canditate.String(), nil
+			return candidate.String(), nil
 		}
 
-		bestIP = filterBestIP([]netip.Addr{canditate, bestIP})
+		bestIP = filterBestIP([]netip.Addr{candidate, bestIP})
 	}
 	if !bestIP.IsValid() {
-		if errs != nil {
-			return "", errors.Wrapf(errs, "no useable address found for interfaces %v", interfaces)
+		if errs.ErrorOrNil() != nil {
+			return "", fmt.Errorf("no useable address found for interfaces %v: %w", interfaces, errs.ErrorOrNil())
 		} else {
 			return "", fmt.Errorf("no useable address found for interfaces %v", interfaces)
 		}
@@ -98,7 +101,7 @@ func getInterfaceAddresses(name string) ([]netip.Addr, error) {
 	for i, a := range addrs {
 		prefix, err := netip.ParsePrefix(a.String())
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse netip.Prefix")
+			return nil, fmt.Errorf("failed to parse netip.Prefix %w", err)
 		}
 		netaddrs[i] = prefix.Addr()
 	}
@@ -107,13 +110,6 @@ func getInterfaceAddresses(name string) ([]netip.Addr, error) {
 }
 
 // filterBestIP returns an opinionated "best" address from a list of addresses.
-// The ordering is the following:
-// - IPv4 valid and not link-local unicast
-// - IPv6 valid and not link-local unicast
-// - IPv4 valid and link-local unicast
-// - IPv6 valid and link-local unicast
-// If none of the above are found, an invalid address is returned.
-// Loopback addresses are never selected.
 func filterBestIP(addrs []netip.Addr) netip.Addr {
 	var invalid, inet4Addr, inet6Addr netip.Addr
 

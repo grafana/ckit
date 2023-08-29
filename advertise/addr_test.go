@@ -147,7 +147,7 @@ func TestFirstAddress(t *testing.T) {
 				"eth2": {"169.254.0.1/16"},
 				"lo":   {"127.0.0.1/8"},
 			},
-			interfaces: []string{"all"},
+			interfaces: []string{},
 			expected:   "192.168.1.1",
 		},
 	}
