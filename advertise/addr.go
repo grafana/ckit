@@ -22,6 +22,8 @@ var DefaultInterfaces = []string{"eth0", "en0"}
 // - IPv6 valid and link-local unicast
 // If none of the above are found, an invalid address is returned.
 // Loopback addresses are never selected.
+// If no interfaces are provided, all of the system's network interfaces will retrieved via net.Interfaces
+// and used to find the "best" ip address.
 func FirstAddress(interfaces []string) (string, error) {
 	return firstAddress(interfaces, getInterfaceAddresses, net.Interfaces)
 }
@@ -33,7 +35,6 @@ type NetworkInterfaceAddressGetter func(name string) ([]netip.Addr, error)
 type InterfaceLister func() ([]net.Interface, error)
 
 // FirstAddress returns the first IPv4/IPv6 address from the given interface names.
-// Link-local unicast addresses will be ignored if possible.
 func firstAddress(interfaces []string, interfaceAddrsFunc NetworkInterfaceAddressGetter, interfaceLister InterfaceLister) (string, error) {
 	var (
 		errs   *multierror.Error
