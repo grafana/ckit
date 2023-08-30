@@ -10,7 +10,7 @@ import (
 )
 
 // Mock function to simulate various interface address conditions
-func mockAddressGetter(data map[string][]string) NetworkInterfaceAddressGetter {
+func mockAddressGetter(data map[string][]string) networkInterfaceAddressGetter {
 	return func(name string) ([]netip.Addr, error) {
 		if addrs, found := data[name]; found {
 			var netAddrs []netip.Addr

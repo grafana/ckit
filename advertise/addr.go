@@ -28,14 +28,14 @@ func FirstAddress(interfaces []string) (string, error) {
 	return firstAddress(interfaces, getInterfaceAddresses, net.Interfaces)
 }
 
-// NetworkInterfaceAddressGetter matches the signature of net.InterfaceByName() to allow for test mocks.
-type NetworkInterfaceAddressGetter func(name string) ([]netip.Addr, error)
+// networkInterfaceAddressGetter matches the signature of net.InterfaceByName() to allow for test mocks.
+type networkInterfaceAddressGetter func(name string) ([]netip.Addr, error)
 
-// InterfaceLister matches the signature of net.Interfaces() to allow for test mocks.
-type InterfaceLister func() ([]net.Interface, error)
+// interfaceLister matches the signature of net.Interfaces() to allow for test mocks.
+type interfaceLister func() ([]net.Interface, error)
 
 // FirstAddress returns the first IPv4/IPv6 address from the given interface names.
-func firstAddress(interfaces []string, interfaceAddrsFunc NetworkInterfaceAddressGetter, interfaceLister InterfaceLister) (string, error) {
+func firstAddress(interfaces []string, interfaceAddrsFunc networkInterfaceAddressGetter, interfaceLister interfaceLister) (string, error) {
 	var (
 		errs   *multierror.Error
 		bestIP netip.Addr
