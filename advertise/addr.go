@@ -24,7 +24,7 @@ var DefaultInterfaces = []string{"eth0", "en0"}
 // Loopback addresses are never selected.
 // If no interfaces are provided, all of the system's network interfaces will retrieved via net.Interfaces
 // and used to find the "best" ip address.
-func FirstAddress(interfaces []string) (string, error) {
+func FirstAddress(interfaces []string) (netip.Addr, error) {
 	return firstAddress(interfaces, getInterfaceAddresses, net.Interfaces)
 }
 
@@ -35,16 +35,17 @@ type networkInterfaceAddressGetter func(name string) ([]netip.Addr, error)
 type interfaceLister func() ([]net.Interface, error)
 
 // FirstAddress returns the first IPv4/IPv6 address from the given interface names.
-func firstAddress(interfaces []string, interfaceAddrsFunc networkInterfaceAddressGetter, interfaceLister interfaceLister) (string, error) {
+func firstAddress(interfaces []string, interfaceAddrsFunc networkInterfaceAddressGetter, interfaceLister interfaceLister) (netip.Addr, error) {
 	var (
-		errs   *multierror.Error
-		bestIP netip.Addr
+		errs    *multierror.Error
+		bestIP  netip.Addr
+		invalid netip.Addr
 	)
 
 	if len(interfaces) == 0 {
 		infs, err := interfaceLister()
 		if err != nil {
-			return "", fmt.Errorf("failed to get interface list: %w", err)
+			return invalid, fmt.Errorf("failed to get interface list: %w", err)
 		}
 		interfaces = make([]string, len(infs))
 		for i, v := range infs {
@@ -67,19 +68,19 @@ func firstAddress(interfaces []string, interfaceAddrsFunc networkInterfaceAddres
 
 		if candidate.Is4() && !candidate.IsLinkLocalUnicast() {
 			// Best address possible, we can return early.
-			return candidate.String(), nil
+			return candidate, nil
 		}
 
 		bestIP = filterBestIP([]netip.Addr{candidate, bestIP})
 	}
 	if !bestIP.IsValid() {
 		if errs.ErrorOrNil() != nil {
-			return "", fmt.Errorf("no useable address found for interfaces %v: %w", interfaces, errs.ErrorOrNil())
+			return invalid, fmt.Errorf("no useable address found for interfaces %v: %w", interfaces, errs.ErrorOrNil())
 		} else {
-			return "", fmt.Errorf("no useable address found for interfaces %v", interfaces)
+			return invalid, fmt.Errorf("no useable address found for interfaces %v", interfaces)
 		}
 	}
-	return bestIP.String(), nil
+	return bestIP, nil
 }
 
 // getInterfaceAddresses is the standard approach to collecting []net.Addr from a network interface by name.

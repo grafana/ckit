@@ -161,7 +161,8 @@ func TestFirstAddress(t *testing.T) {
 				assert.Equal(t, tt.expectedError, err.Error())
 			} else {
 				assert.Nil(t, err)
-				assert.Equal(t, tt.expected, result)
+				// Compare the string version of the ip for practical reason.
+				assert.Equal(t, tt.expected, result.String())
 			}
 		})
 	}
