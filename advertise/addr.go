@@ -5,6 +5,7 @@ package advertise
 import (
 	"fmt"
 	"net"
+	"net/netip"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -13,91 +14,153 @@ import (
 // local network traffic for Unix-like platforms.
 var DefaultInterfaces = []string{"eth0", "en0"}
 
-// FirstAddress returns the first IPv4 address from the given interface names.
-// Addresses used for APIPA will be ignored if possible.
-func FirstAddress(interfaces []string) (net.IP, error) {
+// FirstAddress returns the "best" IP address from the given interface names.
+// "best" is defined as follow in decreasing order:
+// - IPv4 valid and not link-local unicast
+// - IPv6 valid and not link-local unicast
+// - IPv4 valid and link-local unicast
+// - IPv6 valid and link-local unicast
+// If none of the above are found, an invalid address is returned.
+// Loopback addresses are never selected.
+// If no interfaces are provided, all of the system's network interfaces will retrieved via net.Interfaces
+// and used to find the "best" ip address.
+func FirstAddress(interfaces []string) (netip.Addr, error) {
+	return firstAddress(interfaces, getInterfaceAddresses, net.Interfaces)
+}
+
+// networkInterfaceAddressGetter matches the signature of net.InterfaceByName() to allow for test mocks.
+type networkInterfaceAddressGetter func(name string) ([]netip.Addr, error)
+
+// interfaceLister matches the signature of net.Interfaces() to allow for test mocks.
+type interfaceLister func() ([]net.Interface, error)
+
+// FirstAddress returns the first IPv4/IPv6 address from the given interface names.
+func firstAddress(interfaces []string, interfaceAddrsFunc networkInterfaceAddressGetter, interfaceLister interfaceLister) (netip.Addr, error) {
 	var (
-		errs      *multierror.Error
-		privateIP net.IP
+		errs    *multierror.Error
+		bestIP  netip.Addr
+		invalid netip.Addr
 	)
 
+	if len(interfaces) == 0 {
+		infs, err := interfaceLister()
+		if err != nil {
+			return invalid, fmt.Errorf("failed to get interface list: %w", err)
+		}
+		interfaces = make([]string, len(infs))
+		for i, v := range infs {
+			interfaces[i] = v.Name
+		}
+	}
+
 	for _, ifaceName := range interfaces {
-		iface, err := net.InterfaceByName(ifaceName)
+		addrs, err := interfaceAddrsFunc(ifaceName)
 		if err != nil {
 			err = fmt.Errorf("interface %q: %w", ifaceName, err)
 			errs = multierror.Append(errs, err)
 			continue
 		}
 
-		addrs, err := iface.Addrs()
-		if err != nil {
-			err = fmt.Errorf("interface %q addrs: %w", ifaceName, err)
-			errs = multierror.Append(errs, err)
-			continue
-		} else if len(addrs) <= 0 {
-			err = fmt.Errorf("interface %q has no addresses", ifaceName)
-			errs = multierror.Append(errs, err)
+		candidate := filterBestIP(addrs)
+		if !candidate.IsValid() {
 			continue
 		}
 
-		foundAddr := findSuitableIP(addrs)
-		if foundAddr == nil {
-			err = fmt.Errorf("interface %q has no suitable addresses", ifaceName)
-			errs = multierror.Append(errs, err)
-			continue
+		if candidate.Is4() && !candidate.IsLinkLocalUnicast() {
+			// Best address possible, we can return early.
+			return candidate, nil
 		}
 
-		if !IsAutomaticPrivateIP(foundAddr) {
-			return foundAddr, nil
-		} else if privateIP == nil {
-			privateIP = foundAddr
+		bestIP = filterBestIP([]netip.Addr{candidate, bestIP})
+	}
+	if !bestIP.IsValid() {
+		if errs.ErrorOrNil() != nil {
+			return invalid, fmt.Errorf("no useable address found for interfaces %v: %w", interfaces, errs.ErrorOrNil())
+		} else {
+			return invalid, fmt.Errorf("no useable address found for interfaces %v", interfaces)
 		}
 	}
-
-	if privateIP == nil {
-		return nil, errs.ErrorOrNil()
-	}
-	return privateIP, nil
+	return bestIP, nil
 }
 
-// findSuitableIP searches addrs for the first IPv4 address. IPv4 addresses
-// used for APIPA will be ignored if possible.
-//
-// Returns nil if no suitable addresses were found.
-func findSuitableIP(addrs []net.Addr) net.IP {
-	var privateIP net.IP
+// getInterfaceAddresses is the standard approach to collecting []net.Addr from a network interface by name.
+func getInterfaceAddresses(name string) ([]netip.Addr, error) {
+	inf, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	addrs, err := inf.Addrs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Using netip.Addr to allow for easier and consistent address parsing.
+	// Without this, the net.ParseCIDR() that we might like to use in a test does
+	// not have the same net.Addr implementation that we get from calling
+	// interface.Addrs() as above.  Here we normalize on netip.Addr.
+	netaddrs := make([]netip.Addr, len(addrs))
+	for i, a := range addrs {
+		prefix, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse netip.Prefix %w", err)
+		}
+		netaddrs[i] = prefix.Addr()
+	}
+
+	return netaddrs, nil
+}
+
+// filterBestIP returns an opinionated "best" address from a list of addresses.
+func filterBestIP(addrs []netip.Addr) netip.Addr {
+	var invalid, inet4Addr, inet6Addr netip.Addr
 
 	for _, addr := range addrs {
-		addr, ok := addr.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		ipv4 := addr.IP.To4()
-		if ipv4 == nil {
-			// Not IPv4
+		if addr.IsLoopback() || !addr.IsValid() {
 			continue
 		}
 
-		// We can return non-automatic private IPs immediately, otherwise we'll
-		// save the first one as a fallback if there are no better IPs.
-		if !IsAutomaticPrivateIP(ipv4) {
-			return ipv4
-		} else if privateIP == nil {
-			privateIP = ipv4
+		if addr.Is4() {
+			// If we have already been set, can we improve on the quality?
+			if inet4Addr.IsValid() {
+				if inet4Addr.IsLinkLocalUnicast() && !addr.IsLinkLocalUnicast() {
+					inet4Addr = addr
+				}
+				continue
+			}
+			inet4Addr = addr
+		}
+
+		if addr.Is6() {
+			// If we have already been set, can we improve on the quality?
+			if inet6Addr.IsValid() {
+				if inet6Addr.IsLinkLocalUnicast() && !addr.IsLinkLocalUnicast() {
+					inet6Addr = addr
+				}
+				continue
+			}
+			inet6Addr = addr
 		}
 	}
 
-	return privateIP
-}
-
-// IsAutomaticPrivateIP checks whether IP represents an IP address for
-// APIPA (Automatic Private IP Addressing) in the 169.254.0.0/16 range.
-func IsAutomaticPrivateIP(ip net.IP) bool {
-	if ip.To4() == nil {
-		return false
+	// If both address families have been set, compare.
+	if inet4Addr.IsValid() && inet6Addr.IsValid() {
+		if inet4Addr.IsLinkLocalUnicast() && !inet6Addr.IsLinkLocalUnicast() {
+			return inet6Addr
+		}
+		if inet6Addr.IsLinkLocalUnicast() && !inet4Addr.IsLinkLocalUnicast() {
+			return inet4Addr
+		}
+		return inet4Addr
 	}
 
-	var mask = net.IPv4Mask(255, 255, 0, 0)
-	var subnet = net.IPv4(169, 254, 0, 0)
-	return ip.Mask(mask).Equal(subnet)
+	if inet4Addr.IsValid() {
+		return inet4Addr
+	}
+
+	if inet6Addr.IsValid() {
+		return inet6Addr
+	}
+
+	return invalid
 }
