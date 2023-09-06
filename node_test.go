@@ -369,3 +369,37 @@ func TestNode_Peers(t *testing.T) {
 		require.ElementsMatch(t, expectPeers, a.Peers())
 	})
 }
+
+func TestNewNodeIPv6(t *testing.T) {
+	t.Helper()
+	l := testlogger.New(t)
+	name := "node-a"
+
+	if l == nil {
+		l = log.NewNopLogger()
+	}
+
+	lis, err := net.Listen("tcp", "[::1]:0")
+	require.NoError(t, err)
+
+	cfg := Config{
+		Name:          name,
+		AdvertiseAddr: lis.Addr().String(),
+		Log:           log.With(l, "node", name),
+	}
+
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	_, err = NewNode(cli, cfg)
+	require.NoError(t, err)
+}

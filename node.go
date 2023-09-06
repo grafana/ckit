@@ -146,7 +146,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		return nil, fmt.Errorf("failed to read advertise address: %w", err)
 	}
 
-	advertiseIP, err := net.ResolveIPAddr("ip4", advertiseAddr)
+	advertiseIP, err := net.ResolveIPAddr("ip", advertiseAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup advertise address %q: %w", advertiseAddr, err)
 	}
