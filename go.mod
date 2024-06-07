@@ -3,7 +3,7 @@ module github.com/grafana/ckit
 go 1.19
 
 require (
-	github.com/cespare/xxhash/v2 v2.2.0
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/go-msgpack v0.5.5
 	github.com/hashicorp/go-multierror v1.1.1
