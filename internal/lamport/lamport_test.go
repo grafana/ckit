@@ -9,15 +9,15 @@ import (
 
 func TestClock_Now(t *testing.T) {
 	tt := []struct {
-		c      Clock
+		c      *Clock
 		expect Time
 	}{
 		{
-			c:      Clock{time: 0},
+			c:      newClock(),
 			expect: Time(0),
 		},
 		{
-			c:      Clock{time: 15},
+			c:      newClockWithInitialValue(),
 			expect: Time(15),
 		},
 	}
@@ -32,15 +32,15 @@ func TestClock_Now(t *testing.T) {
 
 func TestClock_Tick(t *testing.T) {
 	tt := []struct {
-		c      Clock
+		c      *Clock
 		expect Time
 	}{
 		{
-			c:      Clock{time: 0},
+			c:      newClock(),
 			expect: Time(1),
 		},
 		{
-			c:      Clock{time: 15},
+			c:      newClockWithInitialValue(),
 			expect: Time(16),
 		},
 	}
@@ -55,22 +55,22 @@ func TestClock_Tick(t *testing.T) {
 
 func TestClock_Observe(t *testing.T) {
 	tt := []struct {
-		c       Clock
+		c       *Clock
 		observe Time
 		expect  Time
 	}{
 		{
-			c:       Clock{time: 0},
+			c:       newClock(),
 			observe: Time(0),
 			expect:  Time(1),
 		},
 		{
-			c:       Clock{time: 15},
+			c:       newClockWithInitialValue(),
 			observe: Time(20),
 			expect:  Time(21),
 		},
 		{
-			c:       Clock{time: 15},
+			c:       newClockWithInitialValue(),
 			observe: Time(5),
 			expect:  Time(15),
 		},
@@ -86,7 +86,7 @@ func TestClock_Observe(t *testing.T) {
 }
 
 func BenchmarkClock_Now(b *testing.B) {
-	c := Clock{time: 15}
+	c := newClockWithInitialValue()
 
 	for i := 0; i < b.N; i++ {
 		c.Now()
@@ -94,7 +94,7 @@ func BenchmarkClock_Now(b *testing.B) {
 }
 
 func BenchmarkClock_Tick(b *testing.B) {
-	c := Clock{time: 15}
+	c := newClockWithInitialValue()
 
 	for i := 0; i < b.N; i++ {
 		c.Tick()
@@ -107,4 +107,14 @@ func BenchmarkClock_Observe(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.Observe(Time(i))
 	}
+}
+
+func newClock() *Clock {
+	return &Clock{}
+}
+
+func newClockWithInitialValue() *Clock {
+	c := newClock()
+	c.time.Store(15)
+	return c
 }

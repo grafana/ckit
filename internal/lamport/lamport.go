@@ -19,7 +19,7 @@ func Observe(t Time) { globalClock.Observe(t) }
 // calling Now. The Clock must be manually incremented either by calling Tick
 // or Observe.
 type Clock struct {
-	time uint64
+	time atomic.Uint64
 }
 
 // Time is the value of a Clock.
@@ -27,12 +27,12 @@ type Time uint64
 
 // Now returns the current Time of c. The time is not changed.
 func (c *Clock) Now() Time {
-	return Time(atomic.LoadUint64(&c.time))
+	return Time(c.time.Load())
 }
 
 // Tick increases c's Time by 1 and returns the new value.
 func (c *Clock) Tick() Time {
-	return Time(atomic.AddUint64(&c.time, 1))
+	return Time(c.time.Add(1))
 }
 
 // Observe ensures that c's time is past t. Observe must be called when
@@ -41,13 +41,13 @@ func (c *Clock) Tick() Time {
 func (c *Clock) Observe(t Time) {
 Retry:
 	// If t is behind us, we don't need to do anything.
-	now := atomic.LoadUint64(&c.time)
+	now := c.time.Load()
 	if uint64(t) < now {
 		return
 	}
 
 	// Move our clock past t.
-	if !atomic.CompareAndSwapUint64(&c.time, now, uint64(t+1)) {
+	if !c.time.CompareAndSwap(now, uint64(t+1)) {
 		// Retry if the CAS failed, which can happen when many observations are
 		// happening concurrently. Either this will eventually succeed or another
 		// call to Observe will move the current time past t and we'll be able
