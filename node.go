@@ -62,6 +62,11 @@ type Config struct {
 	// Nodes are prevented from joining a cluster with an explicit label if
 	// they do not share the same label.
 	Label string
+
+	// EnableTLS optionally specifies whether TLS should be
+	// used for communication between peers.
+	// Defaults to false.
+	EnableTLS bool
 }
 
 func (c *Config) validate() error {
@@ -160,6 +165,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		Log:           cfg.Log,
 		Client:        cli,
 		PacketTimeout: 1 * time.Second,
+		UseHTTPS:      cfg.EnableTLS,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transport: %w", err)
