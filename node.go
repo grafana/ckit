@@ -160,7 +160,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 		Log:           cfg.Log,
 		Client:        cli,
 		PacketTimeout: 1 * time.Second,
-		// test
+		UseHTTPS:      true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transport: %w", err)
