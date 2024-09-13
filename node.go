@@ -182,7 +182,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	n := &Node{
 		log: cfg.Log,
 		cfg: cfg,
-		m:   newMetrics(),
+		m:   newMetrics(mlc.Label),
 
 		notifyObserversQueue: queue.New(1),
 
@@ -209,7 +209,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 
 	// Include some extra metrics.
 	n.m.Add(
-		newMemberlistCollector(ml),
+		newMemberlistCollector(ml, mlc.Label),
 		transportMetrics,
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "cluster_node_lamport_time",
