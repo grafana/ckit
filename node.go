@@ -179,11 +179,12 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	mlc.Transport = httpTransport
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
-	mlc.LogOutput = io.Discard
 	mlc.Label = cfg.Label
 
 	if cfg.Log != nil {
-		mlc.LogOutput = &memberListOutputLogger{logger: log.With(cfg.Log, "component", "memberlist")}
+		mlc.Logger = newMemberListLogger(log.With(cfg.Log, "subsystem", "memberlist"))
+	} else {
+		mlc.LogOutput = io.Discard
 	}
 
 	n := &Node{

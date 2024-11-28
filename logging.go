@@ -3,37 +3,53 @@ package ckit
 import (
 	"bytes"
 	"io"
+	golog "log"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 )
 
-// memberListOutputLogger will do best-effort classification of the logging level that memberlist uses and use the
-// corresponding level when logging with logger. This helps us surface only desired log messages from memberlist.
-// If classification fails, debug level is used as a fallback.
+var (
+	errPrefix        = []byte("[ERR]")
+	warnPrefix       = []byte("[WARN]")
+	infoPrefix       = []byte("[INFO]")
+	debugPrefix      = []byte("[DEBUG]")
+	memberListPrefix = []byte("memberlist: ")
+)
+
+// memberListOutputLogger will do best-effort classification of the logging level that memberlist uses in its log lines
+// and use the corresponding level when logging with logger. It will drop redundant `[<level>] memberlist:` parts.
+// This helps us surface only desired log messages from memberlist. If classification fails, info level is used as
+// a fallback. See tests for detailed behaviour.
 type memberListOutputLogger struct {
 	logger log.Logger
 }
 
 var _ io.Writer = (*memberListOutputLogger)(nil)
 
-var (
-	errPrefix  = []byte("[ERR]")
-	warnPrefix = []byte("[WARN]")
-	infoPrefix = []byte("[INFO]")
-)
+func newMemberListLogger(logger log.Logger) *golog.Logger {
+	return golog.New(&memberListOutputLogger{logger: logger}, "", 0)
+}
 
 func (m *memberListOutputLogger) Write(p []byte) (int, error) {
 	var err error
 
-	if bytes.HasPrefix(p, errPrefix) {
-		err = level.Error(m.logger).Log("msg", p)
-	} else if bytes.HasPrefix(p, warnPrefix) {
-		err = level.Warn(m.logger).Log("msg", p)
-	} else if bytes.HasPrefix(p, infoPrefix) {
-		err = level.Info(m.logger).Log("msg", p)
-	} else {
-		err = level.Debug(m.logger).Log("msg", p)
+	sanitizeFn := func(dropPrefix []byte, msg []byte) []byte {
+		noLevel := bytes.TrimSpace(bytes.TrimPrefix(msg, dropPrefix))
+		return bytes.TrimPrefix(noLevel, memberListPrefix)
+	}
+
+	switch {
+	case bytes.HasPrefix(p, errPrefix):
+		err = level.Error(m.logger).Log("msg", sanitizeFn(errPrefix, p))
+	case bytes.HasPrefix(p, warnPrefix):
+		err = level.Warn(m.logger).Log("msg", sanitizeFn(warnPrefix, p))
+	case bytes.HasPrefix(p, infoPrefix):
+		err = level.Info(m.logger).Log("msg", sanitizeFn(infoPrefix, p))
+	case bytes.HasPrefix(p, debugPrefix):
+		err = level.Debug(m.logger).Log("msg", sanitizeFn(debugPrefix, p))
+	default:
+		err = level.Info(m.logger).Log("msg", sanitizeFn(nil, p))
 	}
 
 	if err != nil {
