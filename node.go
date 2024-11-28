@@ -14,15 +14,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/memberlist"
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/grafana/ckit/internal/gossiphttp"
 	"github.com/grafana/ckit/internal/lamport"
 	"github.com/grafana/ckit/internal/messages"
 	"github.com/grafana/ckit/internal/queue"
 	"github.com/grafana/ckit/peer"
 	"github.com/grafana/ckit/shard"
-	"github.com/hashicorp/go-msgpack/codec"
-	"github.com/hashicorp/memberlist"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -182,7 +183,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	mlc.Label = cfg.Label
 
 	if cfg.Log != nil {
-		mlc.LogOutput = log.NewStdlibAdapter(level.Debug(log.With(cfg.Log, "component", "memberlist")))
+		mlc.LogOutput = &memberListOutputLogger{logger: log.With(cfg.Log, "component", "memberlist")}
 	}
 
 	n := &Node{
