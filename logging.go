@@ -17,14 +17,20 @@ type memberListOutputLogger struct {
 
 var _ io.Writer = (*memberListOutputLogger)(nil)
 
+var (
+	errPrefix  = []byte("[ERR]")
+	warnPrefix = []byte("[WARN]")
+	infoPrefix = []byte("[INFO]")
+)
+
 func (m *memberListOutputLogger) Write(p []byte) (int, error) {
 	var err error
 
-	if bytes.Contains(p, []byte("[ERR]")) {
+	if bytes.HasPrefix(p, errPrefix) {
 		err = level.Error(m.logger).Log("msg", p)
-	} else if bytes.Contains(p, []byte("[WARN]")) {
+	} else if bytes.HasPrefix(p, warnPrefix) {
 		err = level.Warn(m.logger).Log("msg", p)
-	} else if bytes.Contains(p, []byte("[INFO]")) {
+	} else if bytes.HasPrefix(p, infoPrefix) {
 		err = level.Info(m.logger).Log("msg", p)
 	} else {
 		err = level.Debug(m.logger).Log("msg", p)
