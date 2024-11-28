@@ -34,9 +34,9 @@ func newMemberListLogger(logger log.Logger) *golog.Logger {
 func (m *memberListOutputLogger) Write(p []byte) (int, error) {
 	var err error
 
-	sanitizeFn := func(dropPrefix []byte, msg []byte) []byte {
+	sanitizeFn := func(dropPrefix []byte, msg []byte) string {
 		noLevel := bytes.TrimSpace(bytes.TrimPrefix(msg, dropPrefix))
-		return bytes.TrimPrefix(noLevel, memberListPrefix)
+		return string(bytes.TrimPrefix(noLevel, memberListPrefix))
 	}
 
 	switch {
