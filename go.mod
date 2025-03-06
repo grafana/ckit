@@ -1,6 +1,6 @@
 module github.com/grafana/ckit
 
-go 1.20
+go 1.23.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
