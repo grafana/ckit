@@ -2,6 +2,8 @@ module github.com/grafana/ckit
 
 go 1.23.0
 
+toolchain go1.24.1
+
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/go-kit/log v0.2.1
@@ -11,7 +13,7 @@ require (
 	github.com/prometheus/client_golang v1.21.1
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/atomic v1.11.0
-	golang.org/x/net v0.37.0
+	golang.org/x/net v0.38.0
 )
 
 require (
