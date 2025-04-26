@@ -439,7 +439,7 @@ func (n *Node) handleStateMessage(msg messages.State) (final messages.State, new
 	defer n.peerMut.Unlock()
 
 	curr, exist := n.peerStates[msg.NodeName]
-	if exist && msg.Time <= curr.Time {
+	if exist && msg.Time <= curr.Time && !n.shouldRefute(curr, msg) {
 		// Ignore a state message if we have the same or a newer one.
 		return curr, false
 	} else if msg.NodeName == n.cfg.Name {
@@ -466,6 +466,18 @@ func (n *Node) handleStateMessage(msg messages.State) (final messages.State, new
 	}
 
 	return msg, true
+}
+
+// shouldRefute returns whether a received message about the current node
+// conflicts with the current state of the node.
+//
+// This can happen when lamport times happen to collide from two different
+// instances of the same node.
+func (n *Node) shouldRefute(cached, recv messages.State) bool {
+	if recv.NodeName != n.cfg.Name {
+		return false
+	}
+	return recv.Time == cached.Time && recv.NewState != cached.NewState
 }
 
 // Peers returns all Peers currently known by n. The Peers list will include
@@ -695,7 +707,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		remoteStates[msg.NodeName] = msg
 
 		curr, exist := nd.peerStates[msg.NodeName]
-		if exist && msg.Time <= curr.Time {
+		if exist && msg.Time <= curr.Time && !nd.shouldRefute(curr, msg) {
 			// Ignore a state message if we have a newer one.
 			continue
 		} else if msg.NodeName == nd.cfg.Name {

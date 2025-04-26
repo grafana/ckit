@@ -174,6 +174,51 @@ func TestNode_State(t *testing.T) {
 		// Wait for a to know b is a viewer.
 		waitPeerState(t, a, b.cfg.Name, peer.StateViewer)
 	})
+
+	t.Run("nodes refute state collisions", func(t *testing.T) {
+		var (
+			l   = testlogger.New(t)
+			ctx = context.Background()
+
+			a, aAddr = newTestNode(t, l, "node-a")
+			b, _     = newTestNode(t, l, "node-b")
+		)
+
+		runTestNode(t, a, nil)
+
+		// We want to try to initate a scenario where a revived instance of a node
+		// has the same clock time for a different state from the previous instance.
+		//
+		// This is really hard to reproduce in practice, but can be done just by
+		// being really unlucky through which nodes are joined and when the
+		// state change happens.
+		//
+		// We'll hack it here by doing unsupported state changes so that the clock
+		// times are the same in both instances.
+		//
+		// We don't use runTestNode this time because we plan to ungracefully leave
+		// the memberlist.
+		require.NoError(t, b.waitChangeState(ctx, peer.StateTerminating))
+		require.NoError(t, b.Start([]string{aAddr}))
+
+		// Wait for node-a to be aware of node-b's state, then have node-b
+		// ungracefully leave the cluster (as if it crashed).
+		//
+		// This must be an ungraceful shutdown, otherwise node-a will stop
+		// tracking node-b before we have a chance to reproduce the collision.
+		waitPeerState(t, a, b.cfg.Name, peer.StateTerminating)
+		require.NoError(t, b.ml.Shutdown())
+
+		// Create a "revived" instance of node-b where it moves to a different
+		// state from the previous instance. After this is done, the new instance
+		// has the same clock time as the previous instance, but a different state.
+		//
+		// b should detect this and refute the state with a new broadcast.
+		b, _ = newTestNode(t, l, "node-b")
+		require.NoError(t, b.ChangeState(ctx, peer.StateParticipant))
+		runTestNode(t, b, []string{aAddr})
+		waitPeerState(t, a, b.cfg.Name, peer.StateParticipant)
+	})
 }
 
 func waitPeerState(t *testing.T, node *Node, peerName string, expect peer.State) {
