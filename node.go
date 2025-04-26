@@ -413,9 +413,13 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 		Time:     n.clock.Tick(),
 	}
 
-	// Treat the stateMsg as if it was received externally to track our own state
-	// along with other nodes.
-	n.handleStateMessage(stateMsg)
+	// We want to call [Node.storePeerState] directly rather than
+	// [Node.handleStateMessage] since the latter will cause the lamport time to be
+	// incremented twice for the state change, making it a little more difficult
+	// to track events.
+	n.peerMut.Lock()
+	n.storePeerState(stateMsg)
+	n.peerMut.Unlock()
 
 	bcast, err := messages.Broadcast(&stateMsg, onDone)
 	if err != nil {
@@ -425,7 +429,21 @@ func (n *Node) changeState(to peer.State, onDone func()) error {
 	return nil
 }
 
-// handleStateMessage handles a state message from a peer. Returns true if the
+// storePeerState stores a state message about a peer. If msg represents
+// a peer already found in the memberlist, handlePeersChanged will be
+// invoked.
+//
+// storePeerState must be called with n.peerMut held for writing.
+func (n *Node) storePeerState(msg messages.State) {
+	n.peerStates[msg.NodeName] = msg
+
+	if p, ok := n.peers[msg.NodeName]; ok {
+		p.State = msg.NewState
+		n.peers[msg.NodeName] = p
+		n.handlePeersChanged()
+	}
+}
+
 // message hasn't been seen before. The final return parameter will be the
 // message to broadcast: if msg is a stale message from a previous instance of
 // the local node, final will be an updated message reflecting the node's local
@@ -457,14 +475,7 @@ func (n *Node) handleStateMessage(msg messages.State) (final messages.State, new
 		level.Debug(n.log).Log("msg", "handling state message", "msg", msg)
 	}
 
-	n.peerStates[msg.NodeName] = msg
-
-	if p, ok := n.peers[msg.NodeName]; ok {
-		p.State = msg.NewState
-		n.peers[msg.NodeName] = p
-		n.handlePeersChanged()
-	}
-
+	n.storePeerState(msg)
 	return msg, true
 }
 
