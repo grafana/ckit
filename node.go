@@ -165,7 +165,7 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	httpTransport, transportMetrics, err := gossiphttp.NewTransport(gossiphttp.Options{
 		Log:           cfg.Log,
 		Client:        cli,
-		PacketTimeout: 1 * time.Second,
+		PacketTimeout: 5 * time.Second,
 		UseHTTPS:      cfg.EnableTLS,
 	})
 	if err != nil {
@@ -180,6 +180,11 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
 	mlc.Label = cfg.Label
+	mlc.ProbeInterval = 5 * time.Second
+	mlc.ProbeTimeout = 2 * time.Second
+	mlc.DisableTcpPings = true           // No point in TCP ping fallbacks when our transport is already HTTP/2.
+	mlc.UDPBufferSize = 10 * 1024 * 1024 // Our buffer size can be a bit higher since we use TCP (10 MiB).
+	mlc.TCPTimeout = 2 * time.Second
 
 	if cfg.Log != nil {
 		mlc.Logger = newMemberListLogger(log.With(cfg.Log, "subsystem", "memberlist"))
