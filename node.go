@@ -709,18 +709,14 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 
 	nd.m.gossipEventsTotal.WithLabelValues(eventMergeRemoteState).Inc()
 
-	var (
-		peersChanged bool
-
-		// Map of remote states by name to optimize lookups.
-		remoteStates = make(map[string]messages.State, len(rs.NodeStates))
-	)
+	var peersChanged bool
 
 	// Merge in node states that the remote peer kept.
 	for _, msg := range rs.NodeStates {
-		// We don't use handleStateMessage here so we can defer recalculating peers
-		// to the end of the merge.
-		remoteStates[msg.NodeName] = msg
+		// Ignore peers we don't know about.
+		if _, ok := nd.peers[msg.NodeName]; !ok {
+			continue
+		}
 
 		curr, exist := nd.peerStates[msg.NodeName]
 		if exist && msg.Time <= curr.Time && !nd.shouldRefute(curr, msg) {
@@ -750,22 +746,6 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		}
 
 		newMessages = append(newMessages, msg)
-	}
-
-	// Clean up stale entries in peerStates.
-	for nodeName := range nd.peerStates {
-		// If nodeName exists, it is not a stale reference.
-		if _, peerExists := nd.peers[nodeName]; peerExists {
-			continue
-		}
-
-		// We don't know about this peer. If the remote state also doesn't have an
-		// entry for this peer, we can treat it as stale and delete it.
-		_, peerExistsRemote := remoteStates[nodeName]
-		if !peerExistsRemote {
-			level.Debug(nd.log).Log("msg", "deleting stale reference to node", "node", nodeName)
-			delete(nd.peerStates, nodeName)
-		}
 	}
 
 	if peersChanged {
@@ -845,6 +825,7 @@ func (nd *nodeDelegate) updatePeer(p peer.Peer) {
 
 func (nd *nodeDelegate) removePeer(name string) {
 	delete(nd.peers, name)
+	delete(nd.peerStates, name)
 	nd.handlePeersChanged()
 }
 
