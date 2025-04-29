@@ -357,6 +357,10 @@ func (n *Node) CurrentState() peer.State {
 //	StateParticipant -> StateTerminating
 //
 // Nodes intended to only be viewers should never transition to another state.
+//
+// It is valid to call ChangeState before calling [Node.Start], but may result
+// in more gossip messages for nodes which have rejoined the cluster. To
+// minimize network traffic, only call ChangeState after starting the Node.
 func (n *Node) ChangeState(ctx context.Context, to peer.State) error {
 	n.stateMut.Lock()
 	defer n.stateMut.Unlock()
