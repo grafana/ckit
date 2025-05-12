@@ -53,6 +53,6 @@ type fakeMessage struct {
 	ty Type
 }
 
-func (fm fakeMessage) Type() Type                 { return fm.ty }
-func (fm fakeMessage) Invalidates(m Message) bool { return false }
-func (fm fakeMessage) Cache() bool                { return false }
+func (fm fakeMessage) Type() Type   { return fm.ty }
+func (fm fakeMessage) Name() string { return "" }
+func (fm fakeMessage) Cache() bool  { return false }
