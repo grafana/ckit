@@ -580,7 +580,17 @@ func (t *Transport) writeToSync(b []byte, addr string) {
 	req.Header.Set("Content-Type", ckitContentType)
 	resp, err := t.opts.Client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		level.Debug(t.log).Log("msg", "failed to send message", "err", err, "status_code", resp.StatusCode)
+		level.Debug(t.log).Log("msg", "failed to send message", "err", err, "status_code", statusCodeValue(resp))
 		t.metrics.packetTxFailedTotal.Inc()
 	}
+}
+
+// statusCodeValue returns the value to use when logging an HTTP status code.
+// if resp is nil, statusCodeValue returns a string of "<no response>".
+// Otherwise, it returns the numeric status code.
+func statusCodeValue(resp *http.Response) any {
+	if resp == nil {
+		return "<no response>"
+	}
+	return resp.StatusCode
 }

@@ -453,6 +453,7 @@ func (n *Node) storePeerState(msg messages.State) {
 	}
 }
 
+// handleStateMessage handles a state message from a peer. Returns true if the
 // message hasn't been seen before. The final return parameter will be the
 // message to broadcast: if msg is a stale message from a previous instance of
 // the local node, final will be an updated message reflecting the node's local
