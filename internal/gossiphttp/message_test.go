@@ -2,6 +2,7 @@ package gossiphttp
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"math"
 	"testing"
@@ -19,7 +20,7 @@ func Fuzz_message(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Ignore slices longer than the max message length.
-		if len(data) > math.MaxUint16 {
+		if len(data) > math.MaxUint32 {
 			t.Skip()
 		}
 
@@ -52,4 +53,88 @@ func Benchmark_message(b *testing.B) {
 			_, _ = readMessage(bytes.NewReader(buf.Bytes()))
 		}
 	})
+}
+
+func TestMessageRoundTrip(t *testing.T) {
+	testMessages := [][]byte{
+		bytes.Repeat([]byte("a"), math.MaxUint16),
+		bytes.Repeat([]byte("b"), 100),
+		bytes.Repeat([]byte("c"), math.MaxUint16+1),
+		bytes.Repeat([]byte("d"), 1000000),
+		bytes.Repeat([]byte("e"), math.MaxUint32),
+	}
+
+	for i, message := range testMessages {
+		t.Run(fmt.Sprintf("message_%d", i), func(t *testing.T) {
+			var buf bytes.Buffer
+
+			// Write message
+			err := writeMessage(&buf, message)
+			require.NoError(t, err)
+
+			// Read message back
+			readBuf := bytes.NewBuffer(buf.Bytes())
+			readData, err := readMessage(readBuf)
+			require.NoError(t, err)
+
+			// Verify round trip
+			require.Equal(t, message, readData)
+		})
+	}
+}
+
+func TestWriteMessageMagicByte(t *testing.T) {
+	tests := []struct {
+		name          string
+		message       []byte
+		expectedMagic byte
+	}{
+		{
+			name:          "empty message (16-bit)",
+			message:       []byte{},
+			expectedMagic: magic,
+		},
+		{
+			name:          "small message (16-bit)",
+			message:       []byte("hello"),
+			expectedMagic: magic,
+		},
+		{
+			name:          "exactly uint16 boundary (16-bit)",
+			message:       bytes.Repeat([]byte("a"), math.MaxUint16),
+			expectedMagic: magic,
+		},
+		{
+			name:          "uint16 boundary + 1 (32-bit)",
+			message:       bytes.Repeat([]byte("a"), math.MaxUint16+1),
+			expectedMagic: magic32,
+		},
+		{
+			name:          "large message (32-bit)",
+			message:       bytes.Repeat([]byte("a"), 1000000),
+			expectedMagic: magic32,
+		},
+		{
+			name:          "max uint32 message (32-bit)",
+			message:       bytes.Repeat([]byte("a"), math.MaxUint32),
+			expectedMagic: magic32,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := writeMessage(&buf, tt.message)
+			require.NoError(t, err)
+
+			// Get the written data
+			writtenData := buf.Bytes()
+
+			// The first byte should be the magic byte
+			actualMagic := writtenData[0]
+			require.Equal(t, tt.expectedMagic, actualMagic,
+				"message length %d should use magic %x, got %x",
+				len(tt.message), tt.expectedMagic, actualMagic)
+		})
+	}
 }
