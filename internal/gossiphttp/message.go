@@ -8,6 +8,25 @@ import (
 	"sync"
 )
 
+// NOTE(rfratto): Even though our messages can store up to 4 GiB
+// ([math.MaxUint32]), the effective limit on 32-bit platforms is 2 GiB
+// ([math.MaxInt32]), since slices are sized with a signed integer.
+//
+// Since ckit supports 32-bit builds we need to determine the platform-specific
+// maximum message length.
+//
+// To set [MaxMesasgeLength], we rely on how [math.MaxInt] is either equivalent
+// to [math.MaxInt32] or [math.MaxInt64] depending on the platform:
+//
+//   - 32-bit: [math.MaxUint32] & [math.MaxInt32] == [math.MaxInt32]
+//   - 64-bit: [math.MaxUint32] & [math.MaxInt64] == [math.MaxUint32]
+//
+// Only in the 32-bit case, the top bit becomes masked out, properly lowering
+// the limit.
+//
+// This makes use of untyped constants in Go to make sure the compiler has
+// enough space for computing this value.
+
 // MaxMessageLength is the maximum length of a message that can be sent or
 // received.
 //
