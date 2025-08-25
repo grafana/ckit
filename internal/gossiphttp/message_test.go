@@ -20,7 +20,7 @@ func Fuzz_message(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Ignore slices longer than the max message length.
-		if len(data) > math.MaxUint32 {
+		if len(data) > MaxMessageLength {
 			t.Skip()
 		}
 
@@ -60,8 +60,7 @@ func TestMessageRoundTrip(t *testing.T) {
 		bytes.Repeat([]byte("a"), math.MaxUint16),
 		bytes.Repeat([]byte("b"), 100),
 		bytes.Repeat([]byte("c"), math.MaxUint16+1),
-		bytes.Repeat([]byte("d"), 1000000),
-		bytes.Repeat([]byte("e"), math.MaxUint32),
+		bytes.Repeat([]byte("d"), 1_000_000),
 	}
 
 	for i, message := range testMessages {
@@ -111,12 +110,7 @@ func TestWriteMessageMagicByte(t *testing.T) {
 		},
 		{
 			name:          "large message (32-bit)",
-			message:       bytes.Repeat([]byte("a"), 1000000),
-			expectedMagic: magic32,
-		},
-		{
-			name:          "max uint32 message (32-bit)",
-			message:       bytes.Repeat([]byte("a"), math.MaxUint32),
+			message:       bytes.Repeat([]byte("a"), 1_000_000),
 			expectedMagic: magic32,
 		},
 	}

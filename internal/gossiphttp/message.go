@@ -8,6 +8,13 @@ import (
 	"sync"
 )
 
+// MaxMessageLength is the maximum length of a message that can be sent or
+// received.
+//
+// MaxMessageLength is [math.MaxInt32] on 32-bit platforms and [math.MaxUint32]
+// on 64-bit platforms.
+const MaxMessageLength = math.MaxUint32 & math.MaxInt
+
 const (
 	// magic is the first byte sent with every message.
 	magic      = 0xcc
@@ -49,6 +56,12 @@ func readMessage(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("invalid magic (%x)", gotMagic)
 	}
 
+	if dataLength > MaxMessageLength {
+		// This can be triggered on 32-bit platforms if a 64-bit sender sends more
+		// than 2 GiB.
+		return nil, fmt.Errorf("message length %d exceeds size limit %d", dataLength, MaxMessageLength)
+	}
+
 	data := make([]byte, dataLength)
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
@@ -58,8 +71,7 @@ func readMessage(r io.Reader) ([]byte, error) {
 
 // writeMessage writes a message to an [io.Writer].
 func writeMessage(w io.Writer, message []byte) error {
-	// Note(salvacorts): We need to cast to uint to avoid overflows on 32-bit systems (e.g. arm docker images)
-	if uint(len(message)) > math.MaxUint32 {
+	if len(message) > MaxMessageLength {
 		return fmt.Errorf("message length %d exceeds size limit %d", len(message), uint32(math.MaxUint32))
 	}
 
