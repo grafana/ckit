@@ -8,6 +8,32 @@ import (
 	"sync"
 )
 
+// NOTE(rfratto): Even though our messages can store up to 4 GiB
+// ([math.MaxUint32]), the effective limit on 32-bit platforms is 2 GiB
+// ([math.MaxInt32]), since slices are sized with a signed integer.
+//
+// Since ckit supports 32-bit builds we need to determine the platform-specific
+// maximum message length.
+//
+// To set [MaxMesasgeLength], we rely on how [math.MaxInt] is either equivalent
+// to [math.MaxInt32] or [math.MaxInt64] depending on the platform:
+//
+//   - 32-bit: [math.MaxUint32] & [math.MaxInt32] == [math.MaxInt32]
+//   - 64-bit: [math.MaxUint32] & [math.MaxInt64] == [math.MaxUint32]
+//
+// Only in the 32-bit case, the top bit becomes masked out, properly lowering
+// the limit.
+//
+// This makes use of untyped constants in Go to make sure the compiler has
+// enough space for computing this value.
+
+// MaxMessageLength is the maximum length of a message that can be sent or
+// received.
+//
+// MaxMessageLength is [math.MaxInt32] on 32-bit platforms and [math.MaxUint32]
+// on 64-bit platforms.
+const MaxMessageLength = math.MaxUint32 & math.MaxInt
+
 const (
 	// magic is the first byte sent with every message.
 	magic      = 0xcc
@@ -49,6 +75,12 @@ func readMessage(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("invalid magic (%x)", gotMagic)
 	}
 
+	if dataLength > MaxMessageLength {
+		// This can be triggered on 32-bit platforms if a 64-bit sender sends more
+		// than 2 GiB.
+		return nil, fmt.Errorf("message length %d exceeds size limit %d", dataLength, MaxMessageLength)
+	}
+
 	data := make([]byte, dataLength)
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
@@ -58,8 +90,7 @@ func readMessage(r io.Reader) ([]byte, error) {
 
 // writeMessage writes a message to an [io.Writer].
 func writeMessage(w io.Writer, message []byte) error {
-	// Note(salvacorts): We need to cast to uint to avoid overflows on 32-bit systems (e.g. arm docker images)
-	if uint(len(message)) > math.MaxUint32 {
+	if len(message) > MaxMessageLength {
 		return fmt.Errorf("message length %d exceeds size limit %d", len(message), uint32(math.MaxUint32))
 	}
 
