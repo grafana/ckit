@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 // magicHeader is added to the start of every message.
@@ -39,6 +39,12 @@ func (t Type) String() string {
 
 // Message is a payload that can be gossiped to other peers.
 type Message interface {
+	// Messages must implement [codec.MissingFielder] to ensure forwards
+	// compatibility with newer versions of ckit that add new fields to messages,
+	// so that older versions of ckit can rebroadcast messages without dropping
+	// unknown fields.
+	codec.MissingFielder
+
 	// Type returns the Type of the message. Type must be a known, valid type.
 	Type() Type
 
