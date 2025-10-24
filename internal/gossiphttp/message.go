@@ -45,7 +45,7 @@ const (
 var headerPool = &sync.Pool{
 	New: func() any {
 		return &header{
-			magic: make([]byte, 1),
+			magic:  make([]byte, 1),
 			size16: make([]byte, 2),
 			size32: make([]byte, 4),
 		}
@@ -53,7 +53,11 @@ var headerPool = &sync.Pool{
 }
 
 type header struct {
-	magic  []byte
+	magic []byte
+	// Only one of size16 or size32 will be used when reading or writing
+	// the header depending on the length of the message. This uses a
+	// small amount of extra memory, which is negligible for most use
+	// cases, but it simplifies the logic for reading and writing the header.
 	size16 []byte
 	size32 []byte
 }
@@ -81,6 +85,8 @@ func (h *header) writeTo(w io.Writer) error {
 		if _, err := w.Write(h.size32); err != nil {
 			return err
 		}
+	default:
+		return fmt.Errorf("unrecognized magic byte (%x)", h.magic[0])
 	}
 	return nil
 }
