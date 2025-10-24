@@ -35,16 +35,16 @@ import (
 const MaxMessageLength = math.MaxUint32 & math.MaxInt
 
 const (
-	// magic is the first byte sent with every message.
-	magic      = 0xcc
-	magic32    = 0xcd
-	headerSize = 5 // 1 byte magic + 2 bytes length of the payload (16-bit) or 4 bytes length of the payload (32-bit)
+	magic16      = 0xcc // magic byte for 16-bit messages
+	header16Size = 3    // 1 byte magic + 2 bytes length of the payload (16-bit)
+	magic32      = 0xcd // magic byte for 32-bit messages
+	header32Size = 5    // 1 byte magic + 4 bytes length of the payload (32-bit)
 )
 
 var headerPool = &sync.Pool{
 	New: func() any {
 		return &header{
-			data: make([]byte, headerSize),
+			data: make([]byte, header32Size), // use the largest possible header size
 		}
 	},
 }
@@ -53,26 +53,49 @@ type header struct {
 	data []byte
 }
 
+func (h *header) write(messageLength int, destination io.Writer) error {
+	if messageLength <= math.MaxUint16 {
+		h.data[0] = magic16
+		binary.BigEndian.PutUint16(h.data[1:3], uint16(messageLength))
+		if _, err := destination.Write(h.data[0:3]); err != nil {
+			return err
+		}
+	} else {
+		h.data[0] = magic32
+		binary.BigEndian.PutUint32(h.data[1:5], uint32(messageLength))
+		if _, err := destination.Write(h.data[0:5]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *header) readFrom(r io.Reader) (dataLength int, err error) {
+	// Read the minimum header size (3 bytes) to obtain the magic byte and determine the message format.
+	if _, err := io.ReadFull(r, h.data[0:3]); err != nil {
+		return 0, err
+	}
+	switch h.data[0] {
+	case magic16:
+		return int(binary.BigEndian.Uint16(h.data[1:3])), nil
+	case magic32:
+		// Read the remaining 2 bytes of the large header.
+		if _, err := io.ReadFull(r, h.data[3:5]); err != nil {
+			return 0, err
+		}
+		return int(binary.BigEndian.Uint32(h.data[1:5])), nil
+	default:
+		return 0, fmt.Errorf("unrecognized magic byte (%x)", h.data[0])
+	}
+}
+
 // readMessage reads a message from an [io.Reader].
 func readMessage(r io.Reader) ([]byte, error) {
 	header := headerPool.Get().(*header)
 	defer headerPool.Put(header)
-	if _, err := io.ReadFull(r, header.data); err != nil {
+	dataLength, err := header.readFrom(r)
+	if err != nil {
 		return nil, err
-	}
-
-	var (
-		gotMagic   = header.data[0]
-		dataLength uint32
-	)
-
-	switch gotMagic {
-	case magic:
-		dataLength = uint32(binary.BigEndian.Uint16(header.data[1:]))
-	case magic32:
-		dataLength = binary.BigEndian.Uint32(header.data[1:])
-	default:
-		return nil, fmt.Errorf("invalid magic (%x)", gotMagic)
 	}
 
 	if dataLength > MaxMessageLength {
@@ -82,10 +105,8 @@ func readMessage(r io.Reader) ([]byte, error) {
 	}
 
 	data := make([]byte, dataLength)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
-	}
-	return data, nil
+	_, err = io.ReadFull(r, data)
+	return data, err
 }
 
 // writeMessage writes a message to an [io.Writer].
@@ -97,18 +118,11 @@ func writeMessage(w io.Writer, message []byte) error {
 	header := headerPool.Get().(*header)
 	defer headerPool.Put(header)
 
-	if len(message) <= math.MaxUint16 {
-		header.data[0] = magic
-		binary.BigEndian.PutUint16(header.data[1:], uint16(len(message)))
-	} else {
-		header.data[0] = magic32
-		binary.BigEndian.PutUint32(header.data[1:], uint32(len(message)))
-	}
-
-	if _, err := w.Write(header.data); err != nil {
+	err := header.write(len(message), w)
+	if err != nil {
 		return err
 	}
 
-	_, err := w.Write(message)
+	_, err = w.Write(message)
 	return err
 }

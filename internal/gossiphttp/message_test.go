@@ -2,6 +2,7 @@ package gossiphttp
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -91,17 +92,17 @@ func TestWriteMessageMagicByte(t *testing.T) {
 		{
 			name:          "empty message (16-bit)",
 			message:       []byte{},
-			expectedMagic: magic,
+			expectedMagic: magic16,
 		},
 		{
 			name:          "small message (16-bit)",
 			message:       []byte("hello"),
-			expectedMagic: magic,
+			expectedMagic: magic16,
 		},
 		{
 			name:          "exactly uint16 boundary (16-bit)",
 			message:       bytes.Repeat([]byte("a"), math.MaxUint16),
-			expectedMagic: magic,
+			expectedMagic: magic16,
 		},
 		{
 			name:          "uint16 boundary + 1 (32-bit)",
@@ -131,4 +132,47 @@ func TestWriteMessageMagicByte(t *testing.T) {
 				len(tt.message), tt.expectedMagic, actualMagic)
 		})
 	}
+}
+
+func TestRead3ByteHeaderMessage(t *testing.T) {
+	// The older versions of ckit use 3-byte header.
+	header := make([]byte, 3)
+	payload := []byte("hello")
+
+	// Create the message just as the old version of ckit would.
+	header[0] = magic16
+	binary.BigEndian.PutUint16(header[1:], uint16(len(payload)))
+
+	// Write the header and payload to the buffer.
+	var message bytes.Buffer
+	message.Write(header)
+	message.Write(payload)
+
+	// Try to read the message.
+	data, err := readMessage(&message)
+
+	require.NoError(t, err)
+	require.Equal(t, payload, data)
+}
+
+func TestWrite3ByteHeaderForSmallMessages(t *testing.T) {
+	// Small messages should use 3-byte header for backward compatibility.
+	payload := []byte("hello")
+
+	// Write the message using writeMessage.
+	var message bytes.Buffer
+	err := writeMessage(&message, payload)
+	require.NoError(t, err)
+
+	writtenData := message.Bytes()
+
+	// Verify magic byte.
+	require.Equal(t, byte(magic16), writtenData[0])
+
+	// Verify length is encoded as uint16 (2 bytes).
+	length := binary.BigEndian.Uint16(writtenData[1:3])
+	require.Equal(t, uint16(len(payload)), length)
+
+	// Verify the payload.
+	require.Equal(t, payload, writtenData[3:])
 }
