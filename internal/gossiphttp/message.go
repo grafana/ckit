@@ -35,11 +35,10 @@ import (
 const MaxMessageLength = math.MaxUint32 & math.MaxInt
 
 const (
-	// magic16 is the first byte sent with every message.
-	magic16      = 0xcc
-	magic32      = 0xcd
-	header16Size = 3 // 1 byte magic + 2 bytes length of the payload (16-bit)
-	header32Size = 5 // 1 byte magic + 4 bytes length of the payload (32-bit)
+	magic16      = 0xcc // magic byte for 16-bit messages
+	header16Size = 3    // 1 byte magic + 2 bytes length of the payload (16-bit)
+	magic32      = 0xcd // magic byte for 32-bit messages
+	header32Size = 5    // 1 byte magic + 4 bytes length of the payload (32-bit)
 )
 
 var headerPool = &sync.Pool{
