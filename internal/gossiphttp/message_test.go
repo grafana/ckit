@@ -173,6 +173,6 @@ func TestWrite3ByteHeaderForSmallMessages(t *testing.T) {
 	length := binary.BigEndian.Uint16(writtenData[1:3])
 	require.Equal(t, uint16(len(payload)), length)
 
-	// Verify the payload
+	// Verify the payload.
 	require.Equal(t, payload, writtenData[3:])
 }
