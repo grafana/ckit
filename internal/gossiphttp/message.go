@@ -77,7 +77,7 @@ func (h *header) readFrom(r io.Reader) (dataLength int, err error) {
 	}
 	switch h.data[0] {
 	case magic16:
-		return int(binary.BigEndian.Uint16(h.data[1:3])), nil // no additional data to read, whole header consumed with a single read op
+		return int(binary.BigEndian.Uint16(h.data[1:3])), nil
 	case magic32:
 		// Read the remaining 2 bytes of the large header.
 		if _, err := io.ReadFull(r, h.data[3:5]); err != nil {
