@@ -71,7 +71,7 @@ func (h *header) write(messageLength int, destination io.Writer) error {
 }
 
 func (h *header) readFrom(r io.Reader) (dataLength int, err error) {
-	// Read the small header (3 bytes) first.
+	// Read the minimum header size (3 bytes) to obtain the magic byte and determine the message format.
 	if _, err := io.ReadFull(r, h.data[0:3]); err != nil {
 		return 0, err
 	}
