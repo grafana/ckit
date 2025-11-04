@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/hashicorp/go-msgpack/codec"
+	"github.com/hashicorp/go-msgpack/v2/codec"
 )
 
 // magicHeader is added to the start of every message.
