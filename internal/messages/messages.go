@@ -21,11 +21,13 @@ type Type uint8
 const (
 	TypeInvalid Type = iota // TypeInvalid is an invalid type.
 	TypeState               // TypeState is used for a State broadcast
+	TypeWeights             // TypeWeights is used for a Weights broadcast
 )
 
 var knownTypes = map[Type]string{
 	TypeInvalid: "invalid",
 	TypeState:   "state",
+	TypeWeights: "weights",
 }
 
 // String returns the string representation of t.

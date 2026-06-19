@@ -126,6 +126,11 @@ type Node struct {
 	peerStates map[string]messages.State // State lookup for a node name
 	peers      map[string]peer.Peer      // Current list of peers & their states
 	peerCache  []peer.Peer               // Slice version of peers; keep in sync with peers
+
+	// peerWeights holds the latest per-target series weights gossiped by each
+	// node (including the local node), used for series-aware work distribution.
+	// Guarded by peerMut.
+	peerWeights map[string]messages.Weights
 }
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
@@ -199,8 +204,9 @@ func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 
 		notifyObserversQueue: queue.New(1),
 
-		peerStates: make(map[string]messages.State),
-		peers:      make(map[string]peer.Peer),
+		peerStates:  make(map[string]messages.State),
+		peers:       make(map[string]peer.Peer),
+		peerWeights: make(map[string]messages.Weights),
 
 		baseRoute: baseRoute,
 		handler:   handler,
@@ -501,6 +507,80 @@ func (n *Node) shouldRefute(cached, recv messages.State) bool {
 	return recv.Time == cached.Time && recv.NewState != cached.NewState
 }
 
+// SetLocalWeights replaces this node's advertised per-target series weights and
+// gossips them to the cluster. weights maps a target key (a shard.Key as
+// uint64) to its observed series count. Each call produces a broadcast, so
+// callers should throttle how often they update weights.
+func (n *Node) SetLocalWeights(weights map[uint64]uint64) error {
+	msg := messages.Weights{
+		NodeName: n.cfg.Name,
+		Time:     n.clock.Tick(),
+		Weights:  weights,
+	}
+
+	n.peerMut.Lock()
+	n.peerWeights[n.cfg.Name] = msg
+	n.peerMut.Unlock()
+
+	bcast, err := messages.Broadcast(&msg, nil)
+	if err != nil {
+		return err
+	}
+	n.broadcasts.QueueBroadcast(bcast)
+	return nil
+}
+
+// PeerWeights returns the per-target series weights gossiped by all peers
+// (including the local node), merged into a single map keyed by target key.
+// Each target is normally advertised by exactly one owner; if the same key
+// briefly appears from two nodes during a handoff, the larger value wins.
+func (n *Node) PeerWeights() map[uint64]uint64 {
+	n.peerMut.RLock()
+	defer n.peerMut.RUnlock()
+
+	merged := make(map[uint64]uint64)
+	for _, msg := range n.peerWeights {
+		for k, w := range msg.Weights {
+			if w > merged[k] {
+				merged[k] = w
+			}
+		}
+	}
+	return merged
+}
+
+// NodesWithWeights returns the names of all nodes (including the local node)
+// that have gossiped a weights message. A node only gossips weights when
+// series-aware balancing is enabled, so this set identifies the series-enabled
+// participants — used to decide whether the whole cluster can safely switch to
+// weighted distribution.
+func (n *Node) NodesWithWeights() []string {
+	n.peerMut.RLock()
+	defer n.peerMut.RUnlock()
+
+	out := make([]string, 0, len(n.peerWeights))
+	for name := range n.peerWeights {
+		out = append(out, name)
+	}
+	return out
+}
+
+// handleWeightsMessage stores a weights message if it is newer (by lamport
+// time) than what we already have for that node. It returns true if the message
+// was new and should be re-broadcast. Must be called with peerMut held for
+// writing.
+func (n *Node) handleWeightsMessage(msg messages.Weights) (newMessage bool) {
+	n.clock.Observe(msg.Time)
+
+	curr, exist := n.peerWeights[msg.NodeName]
+	if exist && msg.Time <= curr.Time {
+		// Ignore a weights message if we have the same or a newer one.
+		return false
+	}
+	n.peerWeights[msg.NodeName] = msg
+	return true
+}
+
 // Peers returns all Peers currently known by n. The Peers list will include
 // peers regardless of their current State. The returned slice should not be
 // modified.
@@ -638,6 +718,26 @@ func (nd *nodeDelegate) NotifyMsg(raw []byte) {
 			nd.m.gossipBroadcastsTotal.WithLabelValues(eventStateChange).Inc()
 		}
 
+	case messages.TypeWeights:
+		nd.m.gossipEventsTotal.WithLabelValues(eventWeights).Inc()
+
+		var w messages.Weights
+		if err := messages.Decode(buf, &w); err != nil {
+			level.Error(nd.log).Log("msg", "failed to decode weights message", "err", err)
+			return
+		}
+
+		nd.peerMut.Lock()
+		isNew := nd.handleWeightsMessage(w)
+		nd.peerMut.Unlock()
+
+		if isNew {
+			// Keep gossiping the message to other peers if we haven't seen it before.
+			bcast, _ := messages.Broadcast(&w, nil)
+			nd.broadcasts.QueueBroadcast(bcast)
+			nd.m.gossipBroadcastsTotal.WithLabelValues(eventWeights).Inc()
+		}
+
 	default:
 		nd.m.gossipEventsTotal.WithLabelValues(eventUnkownMessage).Inc()
 
@@ -679,6 +779,13 @@ func (nd *nodeDelegate) LocalState(join bool) []byte {
 		})
 	}
 
+	// Include the weights we know about for our current peers.
+	for p := range nd.peers {
+		if w, hasWeights := nd.peerWeights[p]; hasWeights {
+			ls.NodeWeights = append(ls.NodeWeights, w)
+		}
+	}
+
 	bb, err := encodeLocalState(&ls)
 	if err != nil {
 		level.Error(nd.log).Log("msg", "failed to encode local state", "err", err)
@@ -700,10 +807,15 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 	// about. After the end of the full sync, we'll want to gossip new messages
 	// we've discovered to our peers.
 	var newMessages = make([]messages.State, 0, len(rs.NodeStates))
+	var newWeightMessages []messages.Weights
 	defer func() {
 		// This must be done after we unlock nd.peerMut, since QueueBroadcast will
 		// call nd.Peers.
 		for _, msg := range newMessages {
+			bcast, _ := messages.Broadcast(&msg, nil)
+			nd.broadcasts.QueueBroadcast(bcast)
+		}
+		for _, msg := range newWeightMessages {
 			bcast, _ := messages.Broadcast(&msg, nil)
 			nd.broadcasts.QueueBroadcast(bcast)
 		}
@@ -753,6 +865,17 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		newMessages = append(newMessages, msg)
 	}
 
+	// Merge in per-target weights the remote peer kept.
+	for _, msg := range rs.NodeWeights {
+		// Ignore peers we don't know about.
+		if _, ok := nd.peers[msg.NodeName]; !ok {
+			continue
+		}
+		if nd.handleWeightsMessage(msg) {
+			newWeightMessages = append(newWeightMessages, msg)
+		}
+	}
+
 	if peersChanged {
 		nd.handlePeersChanged()
 	}
@@ -764,6 +887,10 @@ type localState struct {
 	// NodeStates holds the set of states for all peers of a node. States may
 	// have a lamport time of 0 for nodes that have not broadcast a state yet.
 	NodeStates []messages.State
+	// NodeWeights holds the latest per-target series weights for peers that have
+	// advertised them. Older ckit versions omit this field; msgpack leaves it nil
+	// on decode, so anti-entropy stays backward compatible.
+	NodeWeights []messages.Weights
 }
 
 func encodeLocalState(ls *localState) ([]byte, error) {
@@ -831,6 +958,7 @@ func (nd *nodeDelegate) updatePeer(p peer.Peer) {
 func (nd *nodeDelegate) removePeer(name string) {
 	delete(nd.peers, name)
 	delete(nd.peerStates, name)
+	delete(nd.peerWeights, name)
 	nd.handlePeersChanged()
 }
 

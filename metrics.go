@@ -9,6 +9,7 @@ import (
 // Possible label values for metrics.gossipEventsTotal
 const (
 	eventStateChange      = "state_change_message"
+	eventWeights          = "weights_message"
 	eventUnkownMessage    = "unknown_message"
 	eventGetLocalState    = "get_local_state"
 	eventMergeRemoteState = "merge_remote_state"
