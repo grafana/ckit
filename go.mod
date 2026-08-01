@@ -15,7 +15,7 @@ require (
 )
 
 require (
-	github.com/armon/go-metrics v0.4.1 // indirect
+	github.com/armon/go-metrics v0.6.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
