@@ -1,6 +1,6 @@
 module github.com/grafana/ckit
 
-go 1.24.0
+go 1.25.13
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
@@ -24,7 +24,7 @@ require (
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
 	github.com/hashicorp/go-metrics v0.5.4 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.0 // indirect
-	github.com/hashicorp/go-uuid v1.0.1 // indirect
+	github.com/hashicorp/go-uuid v1.0.4 // indirect
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/miekg/dns v1.1.26 // indirect
