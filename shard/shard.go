@@ -4,6 +4,7 @@ package shard
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -57,7 +58,8 @@ type chasher struct {
 	peersMut sync.RWMutex
 	peers    map[string]peer.Peer // Set of all peers shared across both hashes
 
-	read, readWrite chash.Hash
+	read, readWrite           chash.Hash
+	readNodes, readWriteNodes []string
 }
 
 func (ch *chasher) Peers() []peer.Peer {
@@ -100,8 +102,14 @@ func (ch *chasher) SetPeers(ps []peer.Peer) {
 	defer ch.peersMut.Unlock()
 
 	ch.peers = newPeers
-	ch.read.SetNodes(newRead)
-	ch.readWrite.SetNodes(newReadWrite)
+	if !slices.Equal(ch.readNodes, newRead) {
+		ch.read.SetNodes(newRead)
+		ch.readNodes = newRead
+	}
+	if !slices.Equal(ch.readWriteNodes, newReadWrite) {
+		ch.readWrite.SetNodes(newReadWrite)
+		ch.readWriteNodes = newReadWrite
+	}
 }
 
 func (ch *chasher) Lookup(key Key, numOwners int, op Op) ([]peer.Peer, error) {
