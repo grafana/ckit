@@ -38,7 +38,7 @@ func NewInfoCollector(opts InfoOpts, labelNames ...string) *InfoCollector {
 		prometheus.BuildFQName(opts.Namespace, opts.Subsystem, opts.Name),
 		opts.Help,
 		names,
-		nil,
+		opts.ConstLabels,
 	)
 
 	return &InfoCollector{
