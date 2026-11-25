@@ -709,6 +709,9 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 		}
 	}()
 
+	// Match the stateMut -> peerMut order used by ChangeState and NotifyMsg.
+	nd.stateMut.RLock()
+	defer nd.stateMut.RUnlock()
 	nd.peerMut.Lock()
 	defer nd.peerMut.Unlock()
 
@@ -735,7 +738,7 @@ func (nd *nodeDelegate) MergeRemoteState(buf []byte, join bool) {
 			// it with a newer message reflecting our current state.
 			msg = messages.State{
 				NodeName: nd.cfg.Name,
-				NewState: nd.CurrentState(),
+				NewState: nd.localState,
 				Time:     nd.clock.Tick(),
 			}
 		} else {
